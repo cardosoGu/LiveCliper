@@ -59,3 +59,14 @@ def test_karaoke_highlights_each_spoken_word():
     assert len(lines) == 2  # um evento por palavra
     assert "0:00:00.00,0:00:00.50" in lines[0] and "}MANO{" in lines[0] and lines[0].endswith(" OLHA")
     assert lines[1].startswith("Dialogue: 0,0:00:00.50") and "}OLHA{" in lines[1]
+
+
+def test_anchor_ass_pins_every_line_on_the_seam():
+    from liveclips.processing.subtitles import anchor_ass
+
+    ass = cues_to_ass(build_cues([{"word": "olha", "start": 0, "end": 0.4},
+                                  {"word": "isso", "start": 0.4, "end": 0.8}]), 1920, 1080)
+    out = anchor_ass(ass, 540, 768)
+    dialogues = [ln for ln in out.splitlines() if ln.startswith("Dialogue:")]
+    assert dialogues and all(r",,{\an5\pos(540,768)}" in ln for ln in dialogues)
+    assert out.count("[Events]") == 1 and "Style: Default" in out

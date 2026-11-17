@@ -147,3 +147,17 @@ def cues_to_ass(cues: list[Cue], src_w: int, src_h: int) -> str:
             events.append(f"Dialogue: 0,{_ass_time(max(start, c.start))},{_ass_time(max(end, start + 0.05))},"
                           f"Default,,0,0,0,,{' '.join(parts)}")
     return header + "\n" + "\n".join(events) + "\n"
+
+
+def anchor_ass(ass: str, x: int, y: int) -> str:
+    """Prende cada fala no ponto (x, y), centrada (\\an5): no render final a legenda
+    fica na emenda entre webcam e jogo, qualquer que seja o layout."""
+    out = []
+    for line in ass.splitlines():
+        if line.startswith("Dialogue:"):
+            fields = line.split(",", 9)
+            if len(fields) == 10:
+                fields[9] = f"{{\\an5\\pos({x},{y})}}" + fields[9]
+                line = ",".join(fields)
+        out.append(line)
+    return "\n".join(out) + "\n"
