@@ -61,6 +61,7 @@ class Clipper:
         self.sleep = sleep
         self.pending: list[PendingSpike] = []
         self.no_clip_until: dict[str, float] = {}
+        self._waiters: set[asyncio.Task] = set()
 
     async def on_spike(self, info: ChannelInfo, spike: Spike) -> None:
         if self.no_clip_until.get(info.login, 0.0) > self.clock():
@@ -79,14 +80,23 @@ class Clipper:
             self.pending = [best, *rest]
             return
         self.pending = rest
-        await self._clip(best)
+        clip_id = await self._create(best)
+        if clip_id is not None:
+            # Esperar o clipe ficar pronto leva até 30 s: roda em paralelo para
+            # não deixar os próximos picos passarem do prazo de 15 s.
+            task = asyncio.create_task(self._await_clip(clip_id, best))
+            self._waiters.add(task)
+            task.add_done_callback(self._waiters.discard)
 
-    async def _clip(self, p: PendingSpike) -> None:
-        clip_id = None
+    async def drain(self) -> None:
+        """Espera as tarefas de espera de clipe em andamento (usado em testes)."""
+        while self._waiters:
+            await asyncio.gather(*list(self._waiters))
+
+    async def _create(self, p: PendingSpike) -> str | None:
         for attempt in range(3):
             try:
-                clip_id = await self.api.create_clip(p.info.broadcaster_id)
-                break
+                return await self.api.create_clip(p.info.broadcaster_id)
             except TwitchError as e:
                 if e.status in (429, 500, 502, 503) and attempt < 2:
                     await self.sleep(2 ** attempt)
@@ -94,13 +104,17 @@ class Clipper:
                 if e.status in (400, 403):
                     self.no_clip_until[p.info.login] = self.clock() + 3600
                 log.warning("create_clip falhou em %s: %s", p.info.login, e)
-                return
-        if clip_id is None:
-            return
+                return None
+        return None
+
+    async def _await_clip(self, clip_id: str, p: PendingSpike) -> None:
         clip = None
         for _ in range(15):
             await self.sleep(2)
-            clip = await self.api.get_clip(clip_id)
+            try:
+                clip = await self.api.get_clip(clip_id)
+            except TwitchError as e:
+                log.warning("get_clip %s: %s", clip_id, e)
             if clip:
                 break
         if not clip:

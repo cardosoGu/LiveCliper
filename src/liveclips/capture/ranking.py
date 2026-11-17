@@ -5,6 +5,11 @@ from datetime import datetime
 
 from ..core.models import Candidate
 
+# Clipes da mesma origem marcam o momento com precisão; entre origens diferentes
+# (bot no pico vs. espectador que clipa minutos depois) a defasagem é maior.
+SAME_SOURCE_WINDOW_S = 30.0
+CROSS_SOURCE_WINDOW_S = 180.0
+
 
 def compute_rank(c: Candidate, now: datetime) -> float:
     if c.source == "chat_spike":
@@ -14,10 +19,12 @@ def compute_rank(c: Candidate, now: datetime) -> float:
 
 
 def find_overlap(new: Candidate, existing: list[Candidate],
-                 window_s: float = 30.0) -> Candidate | None:
+                 same_source_s: float = SAME_SOURCE_WINDOW_S,
+                 cross_source_s: float = CROSS_SOURCE_WINDOW_S) -> Candidate | None:
     for e in existing:
         if e.clip_id == new.clip_id or e.channel.lower() != new.channel.lower():
             continue
-        if abs((e.created_at - new.created_at).total_seconds()) <= window_s:
+        window = same_source_s if e.source == new.source else cross_source_s
+        if abs((e.created_at - new.created_at).total_seconds()) <= window:
             return e
     return None

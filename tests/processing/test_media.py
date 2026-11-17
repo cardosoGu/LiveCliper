@@ -54,3 +54,5 @@ async def test_render_vertical_and_frames(tmp_path: Path):
     assert 3.5 < await probe_duration(out) < 4.5
     frames = await extract_frames(src, tmp_path / "frames", 8)
     assert len(frames) == 8
+    fewer = await extract_frames(src, tmp_path / "frames", 3)  # mesma pasta, outro clipe
+    assert len(fewer) == 3  # nada de frames que sobraram da extração anterior

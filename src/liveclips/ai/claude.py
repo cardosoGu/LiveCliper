@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 from pathlib import Path
 
 from ..core.config import Settings
@@ -18,6 +19,14 @@ PRICES_PER_MTOK = {
 SERVER_FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"}
 
 
+@lru_cache(maxsize=2)
+def _client(api_key: str):
+    """Um cliente por chave, reaproveitando conexões entre avaliações."""
+    import anthropic
+
+    return anthropic.AsyncAnthropic(api_key=api_key)
+
+
 def claude_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     inp, out = PRICES_PER_MTOK.get(model, (4.0, 20.0))
     return (input_tokens * inp + output_tokens * out) / 1_000_000
@@ -25,9 +34,8 @@ def claude_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
 
 async def claude_evaluate(cfg: Settings, raw_path: Path, prompt: str) -> tuple[str, float]:
     """Retorna (json do veredito, custo em US$)."""
-    import anthropic
-
-    frames = await extract_frames(Path(raw_path), Path(raw_path).parent / "frames", 8)
+    raw = Path(raw_path)
+    frames = await extract_frames(raw, raw.parent / f"frames_{raw.stem}", 8)
     content: list[dict] = [
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                      "data": base64.standard_b64encode(p.read_bytes()).decode()}}
@@ -39,8 +47,7 @@ async def claude_evaluate(cfg: Settings, raw_path: Path, prompt: str) -> tuple[s
     extra = {}
     if model in SERVER_FALLBACK_MODELS:
         extra = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
-    client = anthropic.AsyncAnthropic(api_key=cfg.anthropic_api_key)
-    resp = await client.beta.messages.create(
+    resp = await _client(cfg.anthropic_api_key).beta.messages.create(
         model=model,
         max_tokens=4000,
         system=SYSTEM_PROMPT,

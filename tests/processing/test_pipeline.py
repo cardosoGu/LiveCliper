@@ -7,6 +7,7 @@ from liveclips.ai.evaluator import AIUnavailable
 from liveclips.ai.verdict import Verdict
 from liveclips.core.models import State
 from liveclips.processing.pipeline import MediaOps, Pipeline
+from liveclips.processing.transcribe import Transcript
 
 
 def verdict(score=8.0, safe=True):
@@ -26,7 +27,7 @@ class FakeEvaluator:
         return self.result
 
 
-def fake_ops(fail_download=False):
+def fake_ops(fail_download=False, speech=("olha", "pt")):
     async def download(url, dest):
         if fail_download:
             raise RuntimeError("404")
@@ -38,7 +39,8 @@ def fake_ops(fail_download=False):
         return dst
 
     async def transcribe(audio, key, http):
-        return [{"start": 0, "end": 1, "text": "olha"}]
+        text, lang = speech
+        return Transcript([{"start": 0, "end": 1, "text": text}], lang)
 
     async def render(src, dst, credit, srt):
         assert credit == "twitch.tv/gaules" and srt is not None
@@ -114,3 +116,13 @@ async def test_old_candidate_expires(db, tmp_path):
     p.now_fn = lambda: later
     await p.tick()
     assert db.get(c.id).state is State.EXPIRED
+
+
+async def test_foreign_speech_rejected_before_ai(db, tmp_path):
+    ops = fake_ops(speech=("oh my god he just fell off the roof", "english"))
+    p, c = make_pipeline(db, tmp_path, verdict(9.0), ops=ops)
+    await p.tick()
+    got = db.get(c.id)
+    assert got.state is State.REJECTED_AI and "english" in got.reason
+    assert p.evaluator.calls == 0 and p.evals_today() == 0
+    assert got.vertical_path is None  # nem renderiza

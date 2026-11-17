@@ -98,6 +98,7 @@ async def amain() -> None:
                 180, "twitch_clips"),
             "pipeline": pipeline.run,
             "scheduler": scheduler.run,
+            "notifier": monitor.run_sender,
             "cleanup": lambda: cleanup_loop(media_dir),
         }
         if bot is not None:
@@ -108,10 +109,10 @@ async def amain() -> None:
                 300, "kick_clips")
 
         plats = ", ".join(p.name for p in publishers) or "nenhuma"
-        asyncio.get_running_loop().call_later(
-            3, lambda: asyncio.create_task(monitor.info(
-                f"🤖 **liveclips iniciado** · categoria: {cfg.twitch_game_name} · "
-                f"plataformas: {plats}" + (" · 🧪 MODO ENSAIO" if cfg.dry_run else ""))))
+        # Vai para a fila de avisos; o sender entrega quando o Discord estiver pronto.
+        await monitor.info(
+            f"🤖 **liveclips iniciado** · categoria: {cfg.twitch_game_name} · "
+            f"plataformas: {plats}" + (" · 🧪 MODO ENSAIO" if cfg.dry_run else ""))
         await asyncio.gather(*(supervise(n, f, monitor.alert) for n, f in jobs.items()))
 
 

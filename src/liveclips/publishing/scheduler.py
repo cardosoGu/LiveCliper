@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
@@ -23,6 +23,14 @@ log = logging.getLogger(__name__)
 class Notifier(Protocol):
     async def post_published(self, c, verdict, results, errors) -> None: ...
     async def dry_run_preview(self, c, verdict, caption, preview_path) -> None: ...
+    async def alert(self, text: str) -> None: ...
+
+
+# Quando NENHUMA plataforma aceita o post (token vencido, túnel fora), o clipe volta
+# para a fila e o scheduler espera antes de tentar de novo: 5, 10, 20, 40, 60 min.
+RETRY_BASE_MIN = 5
+RETRY_MAX_MIN = 60
+MAX_ATTEMPTS_PER_CLIP = 3
 
 
 class Scheduler:
@@ -36,6 +44,9 @@ class Scheduler:
         self.notifier = notifier
         self.now_fn = now_fn
         self.preview_fn = preview_fn
+        self.fail_streak = 0
+        self.retry_at: datetime | None = None
+        self.attempts: dict[int, int] = {}
 
     def day_index(self, now: datetime) -> int:
         first = self.db.kv_get("first_post_day")
@@ -50,6 +61,8 @@ class Scheduler:
         if self.paused():
             return False
         now = self.now_fn()
+        if self.retry_at is not None and now < self.retry_at:
+            return False
         fresh = []
         for c in self.db.by_state(State.QUEUED, 200):
             if is_expired(c, now, self.cfg.queue_ttl_min):
@@ -80,14 +93,15 @@ class Scheduler:
             await self._dry_run(c, verdict, caption, now)
             return
         results, errors = [], []
-        try:
-            url = await self.media.expose(c.vertical_path)
-        except Exception as e:
-            url = ""
-            errors.append(f"url pública: {e}")
+        url = ""
+        if any(getattr(p, "needs_public_url", False) for p in self.publishers):
+            try:
+                url = await self.media.expose(c.vertical_path)
+            except Exception as e:
+                errors.append(f"url pública: {e}")
         job = PublishJob(Path(c.vertical_path), url, caption, verdict.title)
         for p in self.publishers:
-            if p.name == "instagram" and not url:
+            if getattr(p, "needs_public_url", False) and not url:
                 continue
             try:
                 r = await p.publish(job)
@@ -96,14 +110,36 @@ class Scheduler:
             except Exception as e:
                 errors.append(f"{p.name}: {e}")
         if results:
-            c.state = State.PUBLISHED
-            if not self.db.kv_get("first_post_day"):
-                self.db.kv_set("first_post_day", local_day(now).isoformat())
+            self._on_success(c, now)
+            await self.notifier.post_published(c, verdict, results, errors)
         else:
-            c.state = State.FAILED
-            c.reason = "; ".join(errors)[:500] or "nenhuma plataforma configurada"
+            await self._on_total_failure(c, now, errors)
+
+    def _on_success(self, c: Candidate, now: datetime) -> None:
+        self.fail_streak = 0
+        self.retry_at = None
+        self.attempts.pop(c.id, None)
+        c.state = State.PUBLISHED
+        if not self.db.kv_get("first_post_day"):
+            self.db.kv_set("first_post_day", local_day(now).isoformat())
         self.db.update(c)
-        await self.notifier.post_published(c, verdict, results, errors)
+
+    async def _on_total_failure(self, c: Candidate, now: datetime, errors: list[str]) -> None:
+        """Nada foi publicado: o clipe NÃO é descartado (provável problema de
+        token/túnel, não do clipe); só desiste dele após algumas tentativas."""
+        reason = "; ".join(errors)[:500] or "nenhuma plataforma configurada"
+        self.attempts[c.id] = self.attempts.get(c.id, 0) + 1
+        if self.attempts[c.id] >= MAX_ATTEMPTS_PER_CLIP:
+            c.state = State.FAILED
+            self.attempts.pop(c.id, None)
+        c.reason = reason
+        self.db.update(c)
+        self.fail_streak += 1
+        wait = min(RETRY_BASE_MIN * 2 ** (self.fail_streak - 1), RETRY_MAX_MIN)
+        self.retry_at = now + timedelta(minutes=wait)
+        await self.notifier.alert(
+            f"Nenhuma plataforma aceitou o post. Publicações em espera; "
+            f"tentando de novo em {wait} min. Erro: {reason}")
 
     async def _dry_run(self, c: Candidate, verdict: Verdict, caption: str,
                        now: datetime) -> None:

@@ -80,6 +80,8 @@ async def make_preview(src: Path, dst: Path) -> Path:
 
 async def extract_frames(src: Path, out_dir: Path, n: int = 8) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("frame_*.jpg"):  # nunca misturar frames de outro clipe
+        old.unlink()
     duration = await probe_duration(src)
     fps = n / max(duration, 1.0)
     await run("ffmpeg", "-y", "-i", str(src), "-vf", f"fps={fps:.4f},scale=-2:720",

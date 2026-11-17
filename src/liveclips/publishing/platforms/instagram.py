@@ -11,6 +11,7 @@ from .base import PostResult, PublishError, PublishJob
 
 class InstagramPublisher:
     name = "instagram"
+    needs_public_url = True  # o Instagram baixa o vídeo de uma URL
 
     def __init__(self, ig_user_id: str, access_token: str, http: httpx.AsyncClient,
                  version: str = "v23.0",

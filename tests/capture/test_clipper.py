@@ -69,6 +69,7 @@ async def test_tick_creates_candidate(db):
     clipper = Clipper(api, db, TokenBucket(20, clock), clock, nosleep)
     await clipper.on_spike(ChannelInfo("gaules", "1", 1000), SPIKE)
     await clipper.tick()
+    await clipper.drain()
     [c] = db.by_state(State.DETECTED)
     assert c.source == "chat_spike" and c.clip_id == "twitch:c1" and c.spike_score > 0
 
@@ -97,3 +98,25 @@ async def test_503_retries_three_times(db):
 async def test_discover_filters_blocked_and_sorts():
     infos = await discover_twitch(FakeAPI(), "g", 10, blocked={"blocked"})
     assert [i.login for i in infos] == ["big", "small"]
+
+
+async def test_waiting_for_clip_does_not_block_next_spike(db):
+    import asyncio
+
+    release = asyncio.Event()
+
+    class SlowAPI(FakeAPI):
+        async def get_clip(self, clip_id):
+            await release.wait()
+            return CLIP
+
+    api = SlowAPI()
+    clock = Clock()
+    clipper = Clipper(api, db, TokenBucket(0, clock), clock, nosleep)
+    await clipper.on_spike(ChannelInfo("gaules", "1", 1000), SPIKE)
+    await clipper.tick()
+    await clipper.on_spike(ChannelInfo("loud", "2", 1000), SPIKE)
+    await asyncio.wait_for(clipper.tick(), timeout=1)  # não fica preso no 1º clipe
+    assert api.create_calls == 2
+    release.set()
+    await clipper.drain()

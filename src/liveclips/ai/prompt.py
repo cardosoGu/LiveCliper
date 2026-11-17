@@ -30,8 +30,10 @@ reason: 1 frase explicando a nota."""
 
 def build_prompt(meta: dict) -> str:
     transcript = (meta.get("transcript") or "").strip() or "(sem fala detectada)"
+    language = meta.get("language") or "não detectado"
     return (
         f"Plataforma: {meta.get('platform')} | Canal: {meta.get('channel')} | "
         f"Espectadores: {meta.get('viewers')} | Origem: {meta.get('source')}\n"
-        f"Transcrição da fala:\n{transcript[:4000]}"
+        f"Idioma detectado na fala: {language}\n"
+        f"Transcrição da fala (idioma original):\n{transcript[:4000]}"
     )

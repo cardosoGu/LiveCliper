@@ -38,7 +38,7 @@ def test_admit_replaces_weaker_duplicate(db):
     strong = make_candidate(clip_id="b", spike_score=20,
                             created_at=weak.created_at + timedelta(seconds=10))
     assert admit(db, strong, strong.created_at)
-    assert db.get(weak.id).state is State.REJECTED_RANK
+    assert db.get(weak.id).state is State.DUPLICATE
 
 
 def test_admit_refuses_stronger_existing(db):
@@ -56,3 +56,35 @@ def test_candidate_from_twitch_clip():
     c = candidate_from_twitch_clip(clip, "twitch_public", viewers=500)
     assert c.clip_id == "twitch:Abc" and c.channel == "gaules"
     assert c.created_at.tzinfo is not None and c.view_count == 7
+
+
+def test_cross_source_window_is_wider():
+    bot = make_candidate(clip_id="a", source="chat_spike")
+    viewer = make_candidate(clip_id="b", source="twitch_public",
+                            created_at=bot.created_at + timedelta(seconds=90))
+    same_src = make_candidate(clip_id="c", source="chat_spike",
+                              created_at=bot.created_at + timedelta(seconds=90))
+    assert find_overlap(viewer, [bot]) is bot
+    assert find_overlap(same_src, [bot]) is None
+
+
+def test_seen_again_public_clip_is_reranked_and_revived(db):
+    early = make_candidate(clip_id="twitch:x", source="twitch_public", view_count=1,
+                           viewers=2000, spike_score=0)
+    now = early.created_at + timedelta(minutes=2)
+    assert admit(db, early, now)
+    stored = db.get_by_clip_id("twitch:x")
+    stored.state = State.REJECTED_RANK
+    db.update(stored)
+    later = make_candidate(clip_id="twitch:x", source="twitch_public", view_count=300,
+                           viewers=2000, spike_score=0)
+    assert admit(db, later, now + timedelta(minutes=6)) is False  # não é candidato novo
+    got = db.get_by_clip_id("twitch:x")
+    assert got.state is State.DETECTED and got.view_count == 300 and got.rank > stored.rank
+
+
+def test_seen_again_does_not_touch_finished_candidates(db):
+    c = make_candidate(clip_id="twitch:y", source="twitch_public", state=State.PUBLISHED)
+    db.insert_candidate(c)
+    admit(db, make_candidate(clip_id="twitch:y", source="twitch_public", view_count=999))
+    assert db.get(c.id).state is State.PUBLISHED and db.get(c.id).view_count == 0

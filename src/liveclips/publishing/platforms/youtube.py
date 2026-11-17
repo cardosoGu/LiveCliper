@@ -10,6 +10,7 @@ SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
 class YouTubePublisher:
     name = "youtube"
+    needs_public_url = False  # upload direto do arquivo
 
     def __init__(self, client_id: str, client_secret: str, refresh_token: str, privacy: str):
         self.client_id = client_id

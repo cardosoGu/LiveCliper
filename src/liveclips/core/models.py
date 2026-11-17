@@ -12,7 +12,8 @@ class State(StrEnum):
     PROCESSING = "processing"
     QUEUED = "queued"
     PUBLISHED = "published"
-    REJECTED_RANK = "rejected_rank"
+    REJECTED_RANK = "rejected_rank"  # pode voltar a detected se o clipe ganhar views
+    DUPLICATE = "duplicate"  # mesmo momento de outro candidato mais forte
     REJECTED_AI = "rejected_ai"
     EXPIRED = "expired"
     DELETED = "deleted"

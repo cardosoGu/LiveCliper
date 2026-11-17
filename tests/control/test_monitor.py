@@ -94,6 +94,7 @@ async def test_alert_dedups_for_10_minutes(db):
     await m.alert("token caiu")
     clock.t = 601
     await m.alert("token caiu")
+    await m.flush()
     assert len(t.sent) == 2
 
 
@@ -102,6 +103,7 @@ async def test_post_published_has_buttons(db):
     c = make_candidate(ai_score=8.0)
     db.insert_candidate(c)
     await m.post_published(c, V, [PostResult("instagram", "m1", "https://ig/m1")], [])
+    await m.flush()
     text, buttons = t.sent[0]
     assert "twitch.tv/gaules" in text and "https://ig/m1" in text
     assert buttons == [("🗑️ Apagar post", f"del:{c.id}"), ("🚫 Bloquear canal", "block:gaules")]
@@ -111,5 +113,40 @@ async def test_dry_run_preview_sends_file(db, tmp_path):
     m, t, _ = make_monitor(db)
     c = make_candidate(ai_score=7.5)
     await m.dry_run_preview(c, V, "legenda final", tmp_path / "p.mp4")
+    await m.flush()
     path, text = t.files[0]
     assert "ENSAIO" in text and "legenda final" in text
+
+
+async def test_sending_never_blocks_the_caller(db):
+    import asyncio
+
+    class HangingTransport(FakeTransport):
+        async def send(self, text, buttons=None):
+            await asyncio.sleep(3600)  # Discord fora do ar
+
+    m = Monitor(db, HangingTransport(), {}, load_settings({}))
+    await asyncio.wait_for(m.alert("x"), timeout=0.5)  # só enfileira
+    await asyncio.wait_for(m.info("y"), timeout=0.5)
+
+
+async def test_file_failure_falls_back_to_text(db, tmp_path):
+    class NoFiles(FakeTransport):
+        async def send_file(self, path, text):
+            raise RuntimeError("arquivo grande demais")
+
+    t = NoFiles()
+    m = Monitor(db, t, {}, load_settings({}))
+    await m.dry_run_preview(make_candidate(ai_score=7.0), V, "leg", tmp_path / "p.mp4")
+    await m.flush()
+    assert "prévia não enviada" in t.sent[0][0]
+
+
+async def test_outbox_drops_oldest_when_full(db):
+    from liveclips.control import monitor as mon
+
+    m, t, _ = make_monitor(db)
+    for i in range(mon.OUTBOX_MAX + 5):
+        await m.info(f"msg {i}")
+    await m.flush()
+    assert len(t.sent) == mon.OUTBOX_MAX and t.sent[0][0] == "msg 5"

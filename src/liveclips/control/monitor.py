@@ -1,6 +1,7 @@
 """Lógica do painel de controle (avisos, comandos, botões), independente do Discord."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -17,6 +18,7 @@ log = logging.getLogger(__name__)
 
 HELP = ("Comandos: /pause · /resume · /status · /block canal · /unblock canal · "
         "/min_score N")
+OUTBOX_MAX = 200
 
 
 class Transport(Protocol):
@@ -46,12 +48,43 @@ class Monitor:
         self.now_fn = now_fn
         self.clock = clock
         self._last_alert: dict[str, float] = {}
+        # Avisos vão para uma fila drenada por `run_sender`: quem avisa (scheduler,
+        # supervisor) nunca espera o Discord, mesmo se ele estiver fora do ar.
+        self._outbox: asyncio.Queue[tuple] = asyncio.Queue(maxsize=OUTBOX_MAX)
 
-    async def _send(self, text: str, buttons=None) -> None:
+    def _enqueue(self, item: tuple) -> None:
+        if self._outbox.full():
+            self._outbox.get_nowait()  # descarta o mais antigo
+            log.warning("fila de avisos cheia: aviso mais antigo descartado")
+        self._outbox.put_nowait(item)
+
+    async def _deliver(self, item: tuple) -> None:
+        kind = item[0]
         try:
-            await self.transport.send(text, buttons)
+            if kind == "file":
+                _, path, text = item
+                try:
+                    await self.transport.send_file(Path(path), text)
+                except Exception as e:
+                    log.warning("falha ao enviar prévia: %s", e)
+                    await self.transport.send(text + f"\n(prévia não enviada: {e})", None)
+            else:
+                _, text, buttons = item
+                await self.transport.send(text, buttons)
         except Exception as e:
             log.warning("falha ao enviar aviso: %s", e)
+
+    async def run_sender(self) -> None:
+        while True:
+            await self._deliver(await self._outbox.get())
+
+    async def flush(self) -> None:
+        """Entrega tudo o que está na fila agora (testes e encerramento)."""
+        while not self._outbox.empty():
+            await self._deliver(self._outbox.get_nowait())
+
+    async def _send(self, text: str, buttons=None) -> None:
+        self._enqueue(("text", text, buttons))
 
     async def info(self, text: str) -> None:
         await self._send(text)
@@ -78,11 +111,7 @@ class Monitor:
     async def dry_run_preview(self, c, verdict, caption, preview_path) -> None:
         text = (f"🧪 **ENSAIO (nada foi publicado)** — nota {c.ai_score:.1f} · "
                 f"{credit_text(c.platform, c.channel)}\n{verdict.reason}\n\n{caption}")
-        try:
-            await self.transport.send_file(Path(preview_path), text)
-        except Exception as e:
-            log.warning("falha ao enviar prévia: %s", e)
-            await self._send(text + f"\n(prévia não enviada: {e})")
+        self._enqueue(("file", str(preview_path), text))
 
     def status_text(self) -> str:
         now = self.now_fn()

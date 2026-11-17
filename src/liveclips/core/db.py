@@ -85,6 +85,11 @@ class DB:
         row = self.conn.execute("SELECT * FROM candidates WHERE id=?", (cid,)).fetchone()
         return _from_row(row) if row else None
 
+    def get_by_clip_id(self, clip_id: str) -> Candidate | None:
+        row = self.conn.execute(
+            "SELECT * FROM candidates WHERE clip_id=?", (clip_id,)).fetchone()
+        return _from_row(row) if row else None
+
     def update(self, c: Candidate) -> None:
         if c.id is None:
             raise ValueError("candidato sem id")

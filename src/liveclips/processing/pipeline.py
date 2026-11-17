@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 class MediaOps:
     download: Callable[[str, Path], Awaitable[Path]] = download_clip
     extract_audio: Callable[[Path, Path], Awaitable[Path]] = extract_audio
-    transcribe: Callable[..., Awaitable[list[dict]]] = tr.transcribe
+    transcribe: Callable[..., Awaitable[tr.Transcript]] = tr.transcribe
     render: Callable[..., Awaitable[Path]] = render_vertical
 
 
@@ -72,11 +72,16 @@ class Pipeline:
 
     async def process(self, c: Candidate) -> None:
         work = self.media_dir / str(c.id)
+        language = None
         try:
             if not (c.vertical_path and Path(c.vertical_path).exists()):
-                await self._prepare_media(c, work)
+                transcript = await self._prepare_media(c, work)
+                if transcript is None:
+                    return  # rejeitado antes da IA (fala em outro idioma)
+                language = transcript.language
             meta = {"platform": c.platform, "channel": c.channel, "viewers": c.viewers,
-                    "source": c.source, "transcript": c.transcript or ""}
+                    "source": c.source, "transcript": c.transcript or "",
+                    "language": language}
             verdict = await self.evaluator.evaluate(Path(c.vertical_path), Path(c.raw_path), meta)
         except AIUnavailable:
             self.ai_down = True
@@ -97,21 +102,28 @@ class Pipeline:
             self._set(c, State.QUEUED, verdict.reason)
             log.info("na fila: %s (%s, nota %.1f)", c.clip_id, c.channel, verdict.score)
 
-    async def _prepare_media(self, c: Candidate, work: Path) -> None:
+    async def _prepare_media(self, c: Candidate, work: Path) -> tr.Transcript | None:
+        """Baixa, transcreve e renderiza. Retorna None se o clipe foi rejeitado
+        por idioma (economiza render e orçamento de IA)."""
         work.mkdir(parents=True, exist_ok=True)
         raw = await self.ops.download(c.clip_url, work / "raw.mp4")
         c.raw_path = str(raw)
         audio = await self.ops.extract_audio(raw, work / "audio.mp3")
-        segs = await self.ops.transcribe(audio, self.cfg.groq_api_key, self.http)
+        transcript = await self.ops.transcribe(audio, self.cfg.groq_api_key, self.http)
+        c.transcript = transcript.text
+        if transcript.is_clearly_not_portuguese():
+            self._set(c, State.REJECTED_AI,
+                      f"fala detectada em '{transcript.language}', não em português")
+            return None
         srt = None
-        if segs:
+        if transcript.segments:
             srt = work / "subs.srt"
-            srt.write_text(tr.segments_to_srt(segs), encoding="utf-8")
-        c.transcript = " ".join(s["text"].strip() for s in segs)
+            srt.write_text(tr.segments_to_srt(transcript.segments), encoding="utf-8")
         credit = credit_text(c.platform, c.channel)
         vertical = await self.ops.render(raw, work / "vertical.mp4", credit, srt)
         c.vertical_path = str(vertical)
         self.db.update(c)
+        return transcript
 
     def _set(self, c: Candidate, state: State, reason: str | None = None) -> None:
         c.state = state

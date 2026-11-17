@@ -14,6 +14,7 @@ V = Verdict(score=8, safe=True, reason="r", title="t", caption="c", hashtags=["#
 class Pub:
     def __init__(self, name, fail=False):
         self.name = name
+        self.needs_public_url = name == "instagram"
         self.fail = fail
         self.jobs = []
 
@@ -25,7 +26,11 @@ class Pub:
 
 
 class Media:
+    def __init__(self):
+        self.calls = 0
+
     async def expose(self, path):
+        self.calls += 1
         return "https://t.example/media/x.mp4"
 
 
@@ -33,6 +38,10 @@ class Notifier:
     def __init__(self):
         self.published = []
         self.previews = []
+        self.alerts = []
+
+    async def alert(self, text):
+        self.alerts.append(text)
 
     async def post_published(self, c, verdict, results, errors):
         self.published.append((c.id, [r.platform for r in results], errors))
@@ -97,11 +106,42 @@ async def test_one_platform_failing_does_not_block_other(db, tmp_path):
     assert n.published[0][1] == ["tiktok"] and "instagram: caiu" in n.published[0][2][0]
 
 
-async def test_all_failing_marks_failed(db, tmp_path):
+async def test_total_failure_keeps_clip_and_backs_off(db, tmp_path):
     s, c, n, now = setup(db, tmp_path, [Pub("instagram", fail=True)])
     await s.tick()
     got = db.get(c.id)
-    assert got.state is State.FAILED and "caiu" in got.reason
+    assert got.state is State.QUEUED and "caiu" in got.reason  # clipe não é descartado
+    assert n.published == [] and len(n.alerts) == 1 and "5 min" in n.alerts[0]
+    assert not await s.tick()  # em espera: nem tenta
+    s.now_fn = lambda: now + timedelta(minutes=6)
+    await s.tick()
+    assert "10 min" in n.alerts[-1]  # espera dobra
+
+
+async def test_clip_marked_failed_after_max_attempts(db, tmp_path):
+    from liveclips.publishing.scheduler import MAX_ATTEMPTS_PER_CLIP
+
+    s, c, n, now = setup(db, tmp_path, [Pub("instagram", fail=True)])
+    for _ in range(MAX_ATTEMPTS_PER_CLIP):
+        s.retry_at = None
+        await s.tick()
+    assert db.get(c.id).state is State.FAILED
+
+
+async def test_success_resets_backoff(db, tmp_path):
+    ig = Pub("instagram", fail=True)
+    s, c, n, now = setup(db, tmp_path, [ig])
+    await s.tick()
+    ig.fail = False
+    s.retry_at = None
+    assert await s.tick()
+    assert s.fail_streak == 0 and db.get(c.id).state is State.PUBLISHED
+
+
+async def test_no_public_url_requested_when_not_needed(db, tmp_path):
+    s, c, n, now = setup(db, tmp_path, [Pub("tiktok")])
+    await s.tick()
+    assert s.media.calls == 0 and db.get(c.id).state is State.PUBLISHED
 
 
 async def test_dry_run_never_calls_publishers(db, tmp_path):

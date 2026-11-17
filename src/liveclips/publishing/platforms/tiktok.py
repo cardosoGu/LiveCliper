@@ -16,6 +16,7 @@ TT = "https://open.tiktokapis.com/v2"
 
 class TikTokPublisher:
     name = "tiktok"
+    needs_public_url = False  # upload direto do arquivo
 
     def __init__(self, client_key: str, client_secret: str, refresh_token: str,
                  privacy: str, http: httpx.AsyncClient,
