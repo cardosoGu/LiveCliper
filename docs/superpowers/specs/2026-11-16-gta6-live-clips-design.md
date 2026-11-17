@@ -2,7 +2,7 @@
 
 **Data:** 2026-11-16
 **Prazo:** rodando antes do lançamento do GTA 6 (quarta-feira, 00:00)
-**Custo alvo:** R$ 0 (apenas planos gratuitos)
+**Custo alvo:** R$ 0 no caminho principal (planos gratuitos); o fallback de IA (Claude) é pago, com teto diário
 
 ## 1. Objetivo
 
@@ -120,7 +120,13 @@ Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além
   - `safe=false` → `rejected_ai`. Inclui: conteúdo sexual, ódio, ofensa a terceiros, dados pessoais, menor de idade, violência real (não do jogo), streamer fora do jogo em situação constrangedora e **spoiler de história** (cutscenes, missões da campanha, final). A preferência é por caos de gameplay, reação do streamer, física e momentos engraçados.
   - `score < AI_MIN_SCORE` (padrão **7**) → `rejected_ai`.
   - O prompt pede explicitamente: "este clipe prende um espectador brasileiro nos primeiros 2 segundos?". O gancho conta mais na nota.
-- Se a cota do Gemini acabar: **não publica** (sem IA, não há filtro de segurança). O candidato espera na fila até a cota voltar ou expirar.
+- **Fallback: Claude (API da Anthropic).** Se o Gemini falhar ou a cota acabar, o evaluator usa o Claude com o mesmo prompt e o mesmo JSON de saída:
+  - Modelo: `claude-opus-5-5` (configurável em `CLAUDE_MODEL`; `claude-haiku-5-5` custa ~40× menos).
+  - O Claude não aceita vídeo: o evaluator extrai **8 frames** do clipe com FFmpeg (1 a cada ~4 s, 720p) e envia as imagens + a transcrição + os metadados.
+  - Saída via structured outputs (`output_config.format`) com o mesmo schema do Gemini; `effort: low`.
+  - Trata `stop_reason == "refusal"` como `safe=false`.
+  - **Não é gratuito:** API paga, com créditos pré-pagos (a assinatura do Claude/Claude Code não cobre a API). Custo estimado por clipe: ~US$ 0,06 (Opus 5.5) ou ~US$ 0,002 (Haiku 5.5). Um teto diário `CLAUDE_DAILY_BUDGET_USD` (padrão US$ 3) para de usar o fallback ao atingir o limite.
+- Se Gemini **e** Claude estiverem indisponíveis (ou o teto estourar): **não publica**. O candidato espera na fila até uma IA voltar ou expirar.
 
 ### 4.9 scheduler (fila de publicação)
 - Candidatos aprovados pela IA entram numa fila ordenada por `score` da IA (desempate por rank).
@@ -155,7 +161,7 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 - Arquivos de vídeo apagados após 48 h; banco mantido.
 
 ## 5. Configuração (`.env`)
-`TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_USER_TOKEN` (+ refresh), `KICK_ENABLED`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `IG_USER_ID`, `IG_ACCESS_TOKEN`, `TIKTOK_MODE` (`off`/`private`/`public`), `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `YT_MODE` (`off`/`private`/`public`, + credenciais OAuth), `PUBLIC_BASE_URL`, e os parâmetros de ajuste: `MONITOR_MAX_CHANNELS`, `SPIKE_MULTIPLIER`, `SPIKE_MIN_MSGS`, `CLIP_RATE_SECONDS`, `RANK_THRESHOLD`, `AI_DAILY_BUDGET`, `AI_MIN_SCORE`, `POST_MIN_INTERVAL_MIN`, `POST_MAX_PER_DAY`, `POST_MAX_PER_DAY_CAP`, `QUEUE_TTL_MIN`.
+`TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_USER_TOKEN` (+ refresh), `KICK_ENABLED`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_DAILY_BUDGET_USD`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `IG_USER_ID`, `IG_ACCESS_TOKEN`, `TIKTOK_MODE` (`off`/`private`/`public`), `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `YT_MODE` (`off`/`private`/`public`, + credenciais OAuth), `PUBLIC_BASE_URL`, e os parâmetros de ajuste: `MONITOR_MAX_CHANNELS`, `SPIKE_MULTIPLIER`, `SPIKE_MIN_MSGS`, `CLIP_RATE_SECONDS`, `RANK_THRESHOLD`, `AI_DAILY_BUDGET`, `AI_MIN_SCORE`, `POST_MIN_INTERVAL_MIN`, `POST_MAX_PER_DAY`, `POST_MAX_PER_DAY_CAP`, `QUEUE_TTL_MIN`.
 
 ## 6. Tratamento de erros
 - Cada módulo roda em sua própria task asyncio com supervisor: exceção → log + reinício com backoff; os outros seguem.
@@ -183,7 +189,7 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 | Limite/instabilidade do Create Clip | Orçamento global + prioridade por score; o coletor de clipes públicos continua como fonte |
 | Conta bot da Twitch punida por automação | Conta dedicada, separada da pessoal; volume de clipes baixo e configurável |
 | Kick bloqueia o coletor | Módulo isolado e desligável |
-| Cotas gratuitas estouram no lançamento | Pré-ranking filtra antes da IA; fallback "sem nota" e Whisper local; trocar por chave paga = mudar o `.env` |
+| Cotas gratuitas estouram no lançamento | Pré-ranking filtra antes da IA; fallback para o Claude (pago, com teto diário) e Whisper local |
 | SupoClip não roda em ARM ou não tem API adequada | Pipeline próprio com FFmpeg já definido como padrão |
 | VM ARM da Oracle "sem capacidade" | Tentar outras regiões; plano B: rodar o mesmo Docker Compose no PC do usuário |
 
@@ -191,7 +197,7 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 1. Conta Oracle Cloud + VM ARM Ampere (4 OCPU / 24 GB, Ubuntu).
 2. Conta Twitch **bot** dedicada + app em dev.twitch.tv (client id/secret).
 3. Bot do Telegram (@BotFather) + seu chat id.
-4. Chaves gratuitas: Google AI Studio (Gemini) e Groq.
+4. Chaves gratuitas: Google AI Studio (Gemini) e Groq. Chave da API da Anthropic (platform.claude.com) com créditos (mínimo ~US$ 5) para o fallback.
 5. Instagram Business/Creator ligado a uma página do Facebook + app em developers.facebook.com.
 6. App em developers.tiktok.com com a Content Posting API (Direct Post) e **pedido de auditoria enviado hoje**.
 7. Projeto no Google Cloud com a YouTube Data API e **formulário de auditoria enviado hoje**.
