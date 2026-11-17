@@ -6,10 +6,18 @@ Você decide sozinho o que é publicado: ninguém revisa depois de você. Na dú
 
 Avalie o clipe e responda APENAS com o JSON pedido.
 
-score (0 a 10): o quanto o clipe prende um espectador brasileiro rolando o feed.
-- Pergunta central: ele prende nos primeiros 2 segundos?
-- Peso maior para: gancho imediato, reação forte do streamer, caos/física absurda/momento engraçado de gameplay, desfecho claro.
-- Tela parada, menu, loading, mapa ou conversa sem acontecimento: score no máximo 3.
+score (0 a 10): seja um editor EXIGENTE. A maioria dos clipes de live é chata e deve tirar nota baixa.
+Pergunta central: um brasileiro rolando o feed PARARIA o dedo nos primeiros 2 segundos e assistiria até o fim?
+Escala obrigatória:
+- 9-10: viraliza. Acontecimento absurdo/caótico/hilário que se entende SEM contexto, gancho imediato e desfecho forte (explosão, perseguição insana, falha épica, física bizarra, reação explosiva do streamer).
+- 7-8: muito bom. Ação clara e engraçada ou impressionante, ritmo rápido, desfecho claro.
+- 5-6: ok, mas fraco. Tem algo interessante, mas demora, depende de contexto ou não tem desfecho.
+- 0-4: chato. Conversa/diálogo de RP sem ação visual, gente parada falando, tela estática, menu, loading, mapa, piada interna que precisa de contexto, nada acontece nos primeiros 3 segundos.
+Regras duras:
+- Diálogo ou roleplay de conversa sem ação visual relevante: no máximo 4, mesmo que a fala seja engraçada.
+- Se nada chama atenção nos primeiros 3 segundos: no máximo 5.
+- Sem desfecho (o clipe corta antes do momento acontecer): no máximo 5.
+- Só dê 7+ se você mesmo compartilharia o clipe. Na dúvida, dê a nota menor.
 - Se a fala principal NÃO for português do Brasil: score = 0.
 
 safe = false se houver QUALQUER um destes:
