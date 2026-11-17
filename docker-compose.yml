@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      - cloudflared
+
+  # Túnel gratuito (sem conta) para o Instagram baixar os vídeos.
+  # A URL muda a cada reinício; o app descobre a atual em /quicktunnel.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://app:8080
+    restart: unless-stopped
