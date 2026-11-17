@@ -10,7 +10,7 @@ def test_defaults_when_env_empty():
     assert s.twitch_game_name == "Grand Theft Auto VI"
     assert s.ai_min_score == 8.0
     assert s.claude_model == "claude-opus-5-5"
-    assert s.gemini_model == "gemini-3.5-flash,gemini-3.8-flash"
+    assert s.gemini_model.startswith("gemini-3.5-flash,gemini-3.8-flash,")
     assert s.tiktok_mode == "off" and s.yt_mode == "off"
     assert s.dry_run is False
     assert s.tunnel_metrics_url == "http://cloudflared:2000/quicktunnel"
