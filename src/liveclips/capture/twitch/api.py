@@ -87,8 +87,15 @@ class TwitchAPI:
             raise TwitchError(404, f"jogo não encontrado: {name}")
         return j["data"][0]["id"]
 
-    async def get_streams(self, game_id: str, language: str = "pt",
+    async def get_game_ids(self, names: list[str]) -> dict[str, str]:
+        """{nome: id} das categorias que existem (uma requisição para até 100 nomes).
+        Nomes que a Twitch não conhece ficam de fora."""
+        j = await self._request("GET", "/games", params={"name": names[:100]})
+        return {g["name"]: g["id"] for g in j.get("data", [])}
+
+    async def get_streams(self, game_id: str | list[str], language: str = "pt",
                           max_items: int = 500) -> list[dict]:
+        """Lives (mais assistidas primeiro) de uma ou várias categorias juntas."""
         out: list[dict] = []
         cursor = None
         while len(out) < max_items:

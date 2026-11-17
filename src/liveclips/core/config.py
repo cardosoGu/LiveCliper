@@ -63,6 +63,11 @@ class Settings:
     post_max_per_day_cap: int
     queue_ttl_min: int
 
+    @property
+    def twitch_game_names(self) -> list[str]:
+        """TWITCH_GAME_NAME aceita várias categorias separadas por vírgula."""
+        return [n.strip() for n in self.twitch_game_name.split(",") if n.strip()]
+
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     e = dict(os.environ if env is None else env)
@@ -102,7 +107,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         twitch_client_id=s("TWITCH_CLIENT_ID"),
         twitch_client_secret=s("TWITCH_CLIENT_SECRET"),
         twitch_bot_refresh_token=s("TWITCH_BOT_REFRESH_TOKEN"),
-        twitch_game_name=s("TWITCH_GAME_NAME", "Grand Theft Auto VI"),
+        twitch_game_name=s("TWITCH_GAME_NAME", "Grand Theft Auto VI"),  # vírgula separa várias
         kick_enabled=b("KICK_ENABLED", False),
         kick_category_slug=s("KICK_CATEGORY_SLUG", "grand-theft-auto-vi"),
         gemini_api_key=(gemini_keys[0] if gemini_keys else ""),

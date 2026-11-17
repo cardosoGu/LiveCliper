@@ -1,4 +1,4 @@
-"""Descobre as lives BR da categoria e mantém o monitor de chat atualizado."""
+"""Descobre as lives BR das categorias e mantém o monitor de chat atualizado."""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +11,7 @@ from .api import TwitchAPI
 log = logging.getLogger(__name__)
 
 
-async def discover_twitch(api: TwitchAPI, game_id: str, max_channels: int,
+async def discover_twitch(api: TwitchAPI, game_id: str | list[str], max_channels: int,
                           blocked: set[str], min_viewers: int = 0) -> list[ChannelInfo]:
     streams = await api.get_streams(game_id, language="pt", max_items=max_channels * 2)
     infos = [
@@ -24,7 +24,7 @@ async def discover_twitch(api: TwitchAPI, game_id: str, max_channels: int,
     return infos[:max_channels]
 
 
-async def discovery_loop(api: TwitchAPI, game_id: str, monitor: ChatMonitor, db: DB,
+async def discovery_loop(api: TwitchAPI, game_id: str | list[str], monitor: ChatMonitor, db: DB,
                          max_channels: int, viewers_cache: dict[str, int],
                          interval_s: float = 600, min_viewers: int = 0) -> None:
     while True:

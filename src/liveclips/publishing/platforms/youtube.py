@@ -33,7 +33,7 @@ class YouTubePublisher:
             from googleapiclient.http import MediaFileUpload
 
             body = {
-                "snippet": {"title": (job.title or "GTA 6")[:100],
+                "snippet": {"title": (job.title or "Clipe da live")[:100],
                             "description": job.caption[:5000], "categoryId": "20"},
                 "status": {"privacyStatus": self.privacy, "selfDeclaredMadeForKids": False},
             }

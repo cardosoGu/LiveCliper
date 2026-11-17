@@ -1,4 +1,4 @@
-"""Clipes que o próprio público criou na categoria (API oficial da Twitch)."""
+"""Clipes que o próprio público criou nas categorias (API oficial da Twitch)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -8,10 +8,12 @@ from ..intake import admit, candidate_from_twitch_clip
 from .api import TwitchAPI
 
 
-async def collect_twitch_public(api: TwitchAPI, game_id: str, db: DB,
+async def collect_twitch_public(api: TwitchAPI, game_id: str | list[str], db: DB,
                                 viewers_cache: dict[str, int], now: datetime,
                                 min_viewers: int = 0) -> int:
-    clips = await api.get_clips(game_id, now - timedelta(minutes=20), now)
+    clips: list[dict] = []
+    for gid in [game_id] if isinstance(game_id, str) else game_id:  # /clips: 1 jogo por vez
+        clips += await api.get_clips(gid, now - timedelta(minutes=20), now)
     added = 0
     for clip in clips:
         if (clip.get("language") or "").lower() not in ("pt", "pt-br"):

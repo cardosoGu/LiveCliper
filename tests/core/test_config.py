@@ -40,3 +40,8 @@ def test_gemini_keys_in_order():
                        "GEMINI_API_KEY3": " "})
     assert s.gemini_api_keys == ("a", "b", "c") and s.gemini_api_key == "a"
     assert load_settings({"GEMINI_API_KEY": "x"}).gemini_api_keys == ("x",)
+
+
+def test_several_twitch_categories():
+    s = load_settings({"TWITCH_GAME_NAME": "Just Chatting, Grand Theft Auto V ,,Minecraft"})
+    assert s.twitch_game_names == ["Just Chatting", "Grand Theft Auto V", "Minecraft"]

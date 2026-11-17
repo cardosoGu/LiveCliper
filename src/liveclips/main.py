@@ -74,8 +74,15 @@ async def amain() -> None:
             cfg.twitch_client_id, cfg.twitch_client_secret,
             db.kv_get("twitch_refresh_token") or cfg.twitch_bot_refresh_token, http,
             on_refresh=lambda t: db.kv_set("twitch_refresh_token", t))
-        game_id = await twitch.get_game_id(cfg.twitch_game_name)
-        log.info("categoria '%s' = %s", cfg.twitch_game_name, game_id)
+        found = await twitch.get_game_ids(cfg.twitch_game_names)
+        missing = [n for n in cfg.twitch_game_names if n.lower() not in
+                   {f.lower() for f in found}]
+        if missing:
+            log.warning("categorias não encontradas na Twitch (ignoradas): %s", missing)
+        if not found:
+            raise SystemExit(f"nenhuma categoria encontrada: {cfg.twitch_game_name}")
+        game_id = list(found.values())
+        log.info("categorias: %s", found)
 
         viewers_cache: dict[str, int] = {}
         clipper = Clipper(twitch, db, TokenBucket(cfg.clip_rate_seconds),
@@ -122,7 +129,8 @@ async def amain() -> None:
         plats = ", ".join(p.name for p in publishers) or "nenhuma"
         # Vai para a fila de avisos; o sender entrega quando o Discord estiver pronto.
         await monitor.info(
-            f"🤖 **liveclips iniciado** · categoria: {cfg.twitch_game_name} · "
+            f"🤖 **liveclips iniciado** · categorias: {', '.join(found)} · "
+            f"mín. {cfg.min_viewers} espectadores · "
             f"plataformas: {plats}" + (" · 🧪 MODO ENSAIO" if cfg.dry_run else ""))
         await asyncio.gather(*(supervise(n, f, monitor.alert) for n, f in jobs.items()))
 

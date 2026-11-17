@@ -45,3 +45,16 @@ async def test_collect_kick_inserts_recent(db):
     now = parse_iso("2026-11-19T03:10:00Z") + timedelta(minutes=5)
     async with httpx.AsyncClient() as http:
         assert await collect_kick(http, "gta", db, now) == 1
+
+
+async def test_twitch_public_queries_each_category(db):
+    seen = []
+
+    class MultiAPI:
+        async def get_clips(self, game_id, started_at, ended_at):
+            seen.append(game_id)
+            return [clip(f"x{game_id}", "pt", name=f"canal{game_id}")]
+
+    now = parse_iso("2026-11-19T03:05:00Z")
+    assert await collect_twitch_public(MultiAPI(), ["1", "2"], db, {}, now) == 2
+    assert seen == ["1", "2"]

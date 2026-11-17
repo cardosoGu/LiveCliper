@@ -76,3 +76,20 @@ async def test_get_user():
         assert (await api.get_user("Gaules"))["id"] == "9"
         assert await api.get_user("ninguem") is None
     assert route.calls[0].request.url.params["login"] == "gaules"
+
+
+@respx.mock
+async def test_several_categories_in_one_request():
+    respx.post(OAUTH).mock(side_effect=token_handler)
+    games = respx.get(f"{HELIX}/games").mock(return_value=httpx.Response(200, json={"data": [
+        {"id": "509658", "name": "Just Chatting"}, {"id": "27471", "name": "Minecraft"}]}))
+    streams = respx.get(f"{HELIX}/streams").mock(
+        return_value=httpx.Response(200, json={"data": [], "pagination": {}}))
+    async with httpx.AsyncClient() as http:
+        api = TwitchAPI("cid", "sec", "rt", http)
+        found = await api.get_game_ids(["Just Chatting", "Minecraft", "Jogo Que Não Existe"])
+        await api.get_streams(list(found.values()))
+    assert found == {"Just Chatting": "509658", "Minecraft": "27471"}
+    assert games.calls[0].request.url.params.get_list("name") == [
+        "Just Chatting", "Minecraft", "Jogo Que Não Existe"]
+    assert streams.calls[0].request.url.params.get_list("game_id") == ["509658", "27471"]
