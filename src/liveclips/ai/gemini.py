@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -11,6 +12,7 @@ from .prompt import SYSTEM_PROMPT
 from .verdict import Verdict
 
 INLINE_LIMIT = 18 * 1024 * 1024
+log = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=2)
@@ -21,7 +23,14 @@ def _client(api_key: str):
     return genai.Client(api_key=api_key)
 
 
+def model_list(setting: str) -> list[str]:
+    """GEMINI_MODEL aceita vários modelos separados por vírgula, em ordem de preferência."""
+    return [m.strip() for m in setting.split(",") if m.strip()]
+
+
 async def gemini_evaluate(cfg: Settings, video_path: Path, prompt: str) -> str:
+    """Tenta cada modelo da lista; um modelo sobrecarregado (503) ou indisponível
+    não derruba a avaliação enquanto houver outro."""
     def call() -> str:
         from google.genai import types
 
@@ -34,15 +43,18 @@ async def gemini_evaluate(cfg: Settings, video_path: Path, prompt: str) -> str:
             while video.state and video.state.name == "PROCESSING":
                 time.sleep(2)
                 video = client.files.get(name=video.name)
-        resp = client.models.generate_content(
-            model=cfg.gemini_model,
-            contents=[video, SYSTEM_PROMPT + "\n\n" + prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=Verdict,
-                temperature=0.2,
-            ),
-        )
-        return resp.text
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json", response_schema=Verdict, temperature=0.2)
+        errors = []
+        for model in model_list(cfg.gemini_model):
+            try:
+                resp = client.models.generate_content(
+                    model=model, contents=[video, SYSTEM_PROMPT + "\n\n" + prompt],
+                    config=config)
+                return resp.text
+            except Exception as e:
+                log.warning("Gemini %s falhou: %s", model, str(e)[:200])
+                errors.append(f"{model}: {str(e)[:120]}")
+        raise RuntimeError("todos os modelos Gemini falharam: " + " | ".join(errors))
 
     return await asyncio.to_thread(call)

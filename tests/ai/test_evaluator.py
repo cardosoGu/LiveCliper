@@ -86,3 +86,38 @@ async def test_refusal_becomes_unsafe(db):
 def test_claude_cost():
     assert claude_cost_usd("claude-opus-5-5", 1_000_000, 100_000) == pytest.approx(6.0)
     assert claude_cost_usd("claude-haiku-5-5", 1_000_000, 0) == pytest.approx(0.10)
+
+
+async def test_gemini_tries_next_model_when_one_fails(tmp_path, monkeypatch):
+    from liveclips.ai import gemini
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake video")
+    tried = []
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            tried.append(model)
+            if model == "sobrecarregado":
+                raise RuntimeError("503 UNAVAILABLE")
+            return type("R", (), {"text": GOOD})()
+
+    monkeypatch.setattr(gemini, "_client", lambda key: type("C", (), {"models": Models()})())
+    c = cfg(GEMINI_MODEL="sobrecarregado, bom")
+    assert await gemini.gemini_evaluate(c, video, "p") == GOOD
+    assert tried == ["sobrecarregado", "bom"]
+
+
+async def test_gemini_all_models_failing_raises(tmp_path, monkeypatch):
+    from liveclips.ai import gemini
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            raise RuntimeError("503")
+
+    monkeypatch.setattr(gemini, "_client", lambda key: type("C", (), {"models": Models()})())
+    with pytest.raises(RuntimeError, match="todos os modelos"):
+        await gemini.gemini_evaluate(cfg(GEMINI_MODEL="a,b"), video, "p")
