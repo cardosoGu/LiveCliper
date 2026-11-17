@@ -12,7 +12,8 @@ from ..core.config import Settings
 from ..core.db import DB
 from ..core.models import Candidate, State, is_expired
 from ..core.timeutil import local_day, local_midnight_utc, utcnow
-from ..processing.ffmpeg import add_hook_title, make_preview
+from ..core.credits import credit_text
+from ..processing.ffmpeg import make_preview, render_final
 from .caption import build_caption
 from .platforms.base import PublishJob
 from .policy import can_post_now, daily_limit, pick_next
@@ -37,7 +38,7 @@ class Scheduler:
     def __init__(self, db: DB, cfg: Settings, publishers: list, media, notifier: Notifier,
                  now_fn: Callable[[], datetime] = utcnow,
                  preview_fn: Callable[[Path, Path], Awaitable[Path]] = make_preview,
-                 title_fn: Callable[[Path, Path, str], Awaitable[Path]] = add_hook_title):
+                 render_fn: Callable[..., Awaitable[Path]] = render_final):
         self.db = db
         self.cfg = cfg
         self.publishers = publishers
@@ -45,7 +46,7 @@ class Scheduler:
         self.notifier = notifier
         self.now_fn = now_fn
         self.preview_fn = preview_fn
-        self.title_fn = title_fn
+        self.render_fn = render_fn
         self.fail_streak = 0
         self.retry_at: datetime | None = None
         self.attempts: dict[int, int] = {}
@@ -91,7 +92,8 @@ class Scheduler:
     async def publish(self, c: Candidate, now: datetime) -> None:
         verdict = Verdict.model_validate_json(c.ai_json)
         caption = build_caption(verdict, c.platform, c.channel)
-        await self._apply_title(c, verdict.title)
+        if not await self._render_final(c, verdict):
+            return
         if self.cfg.dry_run:
             await self._dry_run(c, verdict, caption, now)
             return
@@ -144,16 +146,30 @@ class Scheduler:
             f"Nenhuma plataforma aceitou o post. Publicações em espera; "
             f"tentando de novo em {wait} min. Erro: {reason}")
 
-    async def _apply_title(self, c: Candidate, title: str) -> None:
-        """Título-gancho no topo; se falhar, segue com o vídeo sem título."""
-        src = Path(c.vertical_path)
-        if not title or src.name == "final.mp4":
-            return
-        try:
-            c.vertical_path = str(await self.title_fn(src, src.with_name("final.mp4"), title))
+    async def _render_final(self, c: Candidate, verdict: Verdict) -> bool:
+        """Render final só dos aprovados: tela dividida (webcam em cima, jogo embaixo),
+        legenda na emenda e título-gancho animado. Falhando, o clipe vai para `failed`."""
+        if c.vertical_path and Path(c.vertical_path).name == "final.mp4"                 and Path(c.vertical_path).exists():
+            return True  # já renderizado (nova tentativa de publicação)
+        raw = Path(c.raw_path) if c.raw_path else None
+        if raw is None or not raw.exists():
+            if c.vertical_path and Path(c.vertical_path).exists():
+                return True  # clipe antigo, renderizado antes da tela dividida
+            c.state, c.reason = State.FAILED, "vídeo original sumiu antes do render"
             self.db.update(c)
+            return False
+        try:
+            c.vertical_path = str(await self.render_fn(
+                raw, raw.with_name("final.mp4"), credit_text(c.platform, c.channel),
+                raw.with_name("subs.ass"), verdict.title, verdict.facecam))
         except Exception as e:
-            log.warning("título-gancho falhou em %s: %s", c.clip_id, e)
+            log.warning("render final falhou em %s: %s", c.clip_id, e)
+            c.state, c.reason = State.FAILED, f"render final: {e}"[:500]
+            self.db.update(c)
+            await self.notifier.alert(f"Render final falhou em {c.clip_id}: {str(e)[:300]}")
+            return False
+        self.db.update(c)
+        return True
 
     async def _dry_run(self, c: Candidate, verdict: Verdict, caption: str,
                        now: datetime) -> None:

@@ -159,3 +159,51 @@ async def test_expired_queue_item(db, tmp_path):
     s.now_fn = lambda: late
     assert not await s.tick()
     assert db.get(c.id).state is State.EXPIRED
+
+
+async def test_approved_clip_gets_split_render_before_publishing(db, tmp_path):
+    from liveclips.ai.verdict import FaceCam
+
+    calls = []
+
+    async def render(src, dst, credit, subs, title, facecam):
+        calls.append((src, dst, credit, subs, title, facecam))
+        dst.write_bytes(b"final")
+        return dst
+
+    v = Verdict(score=8, safe=True, reason="r", title="Ele vai conseguir?", caption="c",
+                hashtags=["#GTA6"], facecam=FaceCam(x=0, y=0.7, w=0.25, h=0.3))
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"r")
+    c = make_candidate(state=State.QUEUED, ai_score=8.0, ai_json=v.model_dump_json(),
+                       raw_path=str(raw))
+    db.insert_candidate(c)
+    now = c.created_at + timedelta(minutes=5)
+    ig = Pub("tiktok")
+    s = Scheduler(db, load_settings({}), [ig], Media(), Notifier(), now_fn=lambda: now,
+                  preview_fn=fake_preview, render_fn=render)
+    assert await s.tick()
+    [(src, dst, credit, subs, title, fc)] = calls
+    assert (src, dst, subs) == (raw, tmp_path / "final.mp4", tmp_path / "subs.ass")
+    assert credit == "twitch.tv/gaules" and title == "Ele vai conseguir?" and fc.y == 0.7
+    assert ig.jobs[0].video_path == tmp_path / "final.mp4"
+    assert db.get(c.id).state is State.PUBLISHED
+
+
+async def test_render_failure_marks_failed_and_alerts(db, tmp_path):
+    async def broken(*a):
+        raise RuntimeError("ffmpeg caiu")
+
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"r")
+    c = make_candidate(state=State.QUEUED, ai_score=8.0, ai_json=V.model_dump_json(),
+                       raw_path=str(raw))
+    db.insert_candidate(c)
+    now = c.created_at + timedelta(minutes=5)
+    n, ig = Notifier(), Pub("tiktok")
+    s = Scheduler(db, load_settings({}), [ig], Media(), n, now_fn=lambda: now,
+                  preview_fn=fake_preview, render_fn=broken)
+    await s.tick()
+    got = db.get(c.id)
+    assert got.state is State.FAILED and "ffmpeg caiu" in got.reason
+    assert ig.jobs == [] and "ffmpeg caiu" in n.alerts[0]

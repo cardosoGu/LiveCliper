@@ -21,7 +21,7 @@ from ..capture.twitch.clipper import follow_up_clip, wait_for_clip
 from ..core.credits import credit_text
 from ..core.db import DB
 from ..core.models import State
-from ..processing.ffmpeg import add_hook_title, make_preview
+from ..processing.ffmpeg import make_preview, render_final
 from ..processing.pipeline import Pipeline
 from ..publishing.caption import build_caption
 
@@ -45,10 +45,11 @@ class ManualTester:
     def __init__(self, api: TwitchAPI, db: DB, pipeline: Pipeline, chat: ChatMonitor,
                  preview_fn: Callable[[Path, Path], Awaitable[Path]] = make_preview,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                 followup_delay_s: float = 0):
+                 followup_delay_s: float = 0,
+                 render_fn: Callable[..., Awaitable[Path]] = render_final):
         self.api = api
         self.followup_delay_s = followup_delay_s
-        self.title_fn = add_hook_title
+        self.render_fn = render_fn
         self.db = db
         self.pipeline = pipeline
         self.chat = chat
@@ -116,15 +117,26 @@ class ManualTester:
             lines += [f"Resultado: {outcome}", f"Detalhe: {c.reason or '-'}"]
 
         preview = None
+        raw = Path(c.raw_path) if c.raw_path else None
+        verdict = Verdict.model_validate_json(c.ai_json) if c.ai_json else None
+        if raw and raw.exists():
+            # mesmo render final dos aprovados (tela dividida + título animado), mesmo
+            # quando a IA reprovaria; sem IA (ex.: cota esgotada), usa o título da Twitch
+            try:
+                c.vertical_path = str(await self.render_fn(
+                    raw, raw.with_name("final.mp4"), credit_text(c.platform, c.channel),
+                    raw.with_name("subs.ass"), verdict.title if verdict else (c.title or ""),
+                    verdict.facecam if verdict else None))
+            except Exception as e:
+                log.warning("render final do teste falhou: %s", e)
+                lines.append(f"⚠️ Render final falhou: {str(e)[:300]}")
         if c.vertical_path and Path(c.vertical_path).exists():
-            # título da IA; sem IA (ex.: cota esgotada), usa o título do clipe na Twitch
-            hook = Verdict.model_validate_json(c.ai_json).title if c.ai_json else c.title
-            if hook:
-                try:
-                    src = Path(c.vertical_path)
-                    c.vertical_path = str(await self.title_fn(src, src.with_name("final.mp4"), hook))
-                except Exception as e:
-                    log.warning("título-gancho do teste falhou: %s", e)
+            fc = verdict.facecam if verdict else None
+            if fc:
+                lines.append(f"Webcam: x={fc.x:.2f} y={fc.y:.2f} w={fc.w:.2f} h={fc.h:.2f}"
+                             " (tela dividida)")
+            elif verdict:
+                lines.append("Webcam: não encontrada (jogo em tela cheia)")
             preview = Path(c.vertical_path).with_name("preview.mp4")
             try:
                 await self.preview_fn(Path(c.vertical_path), preview)

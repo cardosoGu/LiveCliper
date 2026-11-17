@@ -59,12 +59,13 @@ class FakePipeline:
     async def process(self, c):
         self.processed.append(c.id)
         assert self.db.get(c.id).state is State.PROCESSING  # nunca disponível p/ o pipeline normal
-        v = self.tmp / "vertical.mp4"
-        v.write_bytes(b"v")
-        c.vertical_path = str(v)
+        raw = self.tmp / "raw.mp4"  # o pipeline real não renderiza: só baixa e legenda
+        raw.write_bytes(b"r")
+        c.raw_path = str(raw)
         c.ai_score = self.score
         c.ai_json = Verdict(score=self.score, safe=self.safe, reason="caos total",
-                            title="Explodiu", caption="olha isso", hashtags=["#GTA6"]).model_dump_json()
+                            title="Explodiu", caption="olha isso", hashtags=["#GTA6"],
+                            facecam={"x": 0, "y": 0.7, "w": 0.25, "h": 0.3}).model_dump_json()
         c.state = self.state
         self.db.update(c)
 
@@ -74,9 +75,19 @@ async def fake_preview(src, dst):
     return dst
 
 
+RENDERS = []
+
+
+async def fake_render(src, dst, credit, subs, title, facecam):
+    RENDERS.append((src.name, dst.name, credit, subs.name, title, facecam))
+    dst.write_bytes(b"final")
+    return dst
+
+
 def tester(db, tmp_path, api=None, chat=None, **pipe):
+    RENDERS.clear()
     return ManualTester(api or FakeAPI(), db, FakePipeline(db, tmp_path, **pipe),
-                        chat or FakeChat(), fake_preview, nosleep)
+                        chat or FakeChat(), fake_preview, nosleep, render_fn=fake_render)
 
 
 async def test_uses_most_active_channel_and_never_queues(db, tmp_path):
@@ -89,6 +100,12 @@ async def test_uses_most_active_channel_and_never_queues(db, tmp_path):
     assert "SERIA PUBLICADO" in r.text and "Nota da IA: **8.0**" in r.text
     assert "twitch.tv/loud" in r.text and r.preview_path.name == "preview.mp4"
     assert db.by_state(State.QUEUED) == []
+    # render final (tela dividida + título) a partir do vídeo original, com a webcam da IA
+    [(src, dst, credit, subs, title, fc)] = RENDERS
+    assert (src, dst, credit, subs, title) == ("raw.mp4", "final.mp4", "twitch.tv/loud",
+                                               "subs.ass", "Explodiu")
+    assert fc.y == 0.7 and "tela dividida" in r.text
+    assert c.vertical_path.endswith("final.mp4")
 
 
 async def test_falls_back_to_biggest_live_without_chat_activity(db, tmp_path):
@@ -100,7 +117,7 @@ async def test_falls_back_to_biggest_live_without_chat_activity(db, tmp_path):
 async def test_rejected_clip_still_shows_preview_and_reason(db, tmp_path):
     r = await tester(db, tmp_path, score=3.0, state=State.REJECTED_AI).run()
     assert "seria rejeitado" in r.text and "caos total" in r.text
-    assert r.preview_path is not None
+    assert r.preview_path is not None and len(RENDERS) == 1  # mostra mesmo reprovado
 
 
 async def test_named_channel_outside_monitor_is_looked_up(db, tmp_path):
