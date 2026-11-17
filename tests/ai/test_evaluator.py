@@ -144,3 +144,49 @@ async def test_gemini_tries_every_key_before_next_model(tmp_path, monkeypatch):
                        "GEMINI_MODEL": "m1,m2"})
     assert await gemini.gemini_evaluate(c, video, "p") == GOOD
     assert tried == [("m1", "k1"), ("m1", "k2"), ("m1", "k3"), ("m2", "k1")]
+
+
+def _with_facecam(fc):
+    return json.dumps({"score": 8, "safe": True, "reason": "", "title": "", "caption": "",
+                       "hashtags": [], "facecam": fc})
+
+
+def test_facecam_valid_is_kept():
+    v = parse_verdict(_with_facecam({"x": 0.0, "y": 0.7, "w": 0.25, "h": 0.3}))
+    assert (v.facecam.x, v.facecam.y, v.facecam.w, v.facecam.h) == (0.0, 0.7, 0.25, 0.3)
+
+
+def test_facecam_missing_or_null_is_none():
+    assert parse_verdict(GOOD).facecam is None  # vereditos antigos (sem o campo) continuam válidos
+    assert parse_verdict(_with_facecam(None)).facecam is None
+
+
+@pytest.mark.parametrize("fc", [
+    {"x": 0.4, "y": 0.4, "w": 0.05, "h": 0.1},   # 0,5% da área: pequeno demais
+    {"x": 0.0, "y": 0.0, "w": 0.8, "h": 0.6},    # 48%: grande demais
+    {"x": 0.8, "y": 0.5, "w": 0.4, "h": 0.4},    # passa da borda direita
+    {"x": -0.2, "y": 0.1, "w": 0.3, "h": 0.3},   # começa fora do quadro
+    {"x": 0.1, "y": 0.1, "w": 0.0, "h": 0.3},    # largura zero
+])
+def test_facecam_invalid_becomes_none(fc):
+    assert parse_verdict(_with_facecam(fc)).facecam is None
+
+
+def test_facecam_slightly_out_of_bounds_is_trimmed():
+    v = parse_verdict(_with_facecam({"x": 0.76, "y": -0.01, "w": 0.25, "h": 0.3}))
+    assert v.facecam.y == 0 and abs(v.facecam.x + v.facecam.w - 1.0) < 1e-9
+
+
+def test_claude_schema_requires_nullable_facecam():
+    from liveclips.ai.verdict import VERDICT_SCHEMA
+
+    assert "facecam" in VERDICT_SCHEMA["required"]
+    types = [s.get("type") for s in VERDICT_SCHEMA["properties"]["facecam"]["anyOf"]]
+    assert types == ["object", "null"]
+
+
+def test_prompt_asks_for_facecam_and_short_hook():
+    from liveclips.ai.prompt import SYSTEM_PROMPT
+
+    assert "facecam" in SYSTEM_PROMPT and "null" in SYSTEM_PROMPT
+    assert "35 caracteres" in SYSTEM_PROMPT and "PERGUNTA" in SYSTEM_PROMPT

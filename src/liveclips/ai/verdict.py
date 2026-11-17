@@ -63,7 +63,8 @@ def valid_facecam(fc: FaceCam | None) -> FaceCam | None:
             or fc.x + fc.w > 1 + t or fc.y + fc.h > 1 + t):
         return None
     x, y = max(fc.x, 0.0), max(fc.y, 0.0)
-    w, h = min(fc.x + fc.w, 1.0) - x, min(fc.y + fc.h, 1.0) - y
+    w = min(fc.w - (x - fc.x), 1.0 - x)
+    h = min(fc.h - (y - fc.y), 1.0 - y)
     if not FACECAM_MIN_AREA <= w * h <= FACECAM_MAX_AREA:
         return None
     return FaceCam(x=x, y=y, w=w, h=h)
