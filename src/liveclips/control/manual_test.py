@@ -21,7 +21,7 @@ from ..capture.twitch.clipper import follow_up_clip, wait_for_clip
 from ..core.credits import credit_text
 from ..core.db import DB
 from ..core.models import State
-from ..processing.ffmpeg import make_preview
+from ..processing.ffmpeg import add_hook_title, make_preview
 from ..processing.pipeline import Pipeline
 from ..publishing.caption import build_caption
 
@@ -48,6 +48,7 @@ class ManualTester:
                  followup_delay_s: float = 0):
         self.api = api
         self.followup_delay_s = followup_delay_s
+        self.title_fn = add_hook_title
         self.db = db
         self.pipeline = pipeline
         self.chat = chat
@@ -116,6 +117,13 @@ class ManualTester:
 
         preview = None
         if c.vertical_path and Path(c.vertical_path).exists():
+            if c.ai_json:
+                try:
+                    src = Path(c.vertical_path)
+                    c.vertical_path = str(await self.title_fn(
+                        src, src.with_name("final.mp4"), Verdict.model_validate_json(c.ai_json).title))
+                except Exception as e:
+                    log.warning("título-gancho do teste falhou: %s", e)
             preview = Path(c.vertical_path).with_name("preview.mp4")
             try:
                 await self.preview_fn(Path(c.vertical_path), preview)

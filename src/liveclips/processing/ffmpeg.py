@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -97,6 +98,51 @@ async def render_vertical(src: Path, dst: Path, credit: str,
         "-movflags", "+faststart", "-t", "90", str(dst),
         timeout=600,
     )
+    return dst
+
+
+_EMOJI = re.compile("[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F\u200D]")
+TITLE_SIZE = 72
+TITLE_LINE_H = 92
+TITLE_CENTER_Y = 420  # faixa de cima, entre o crédito (y=200) e o jogo (começa em ~656)
+
+
+def wrap_title(title: str, max_chars: int = 20, max_lines: int = 2) -> list[str]:
+    """Quebra o título em até 2 linhas curtas, sem emoji (a fonte não desenha emoji)."""
+    words = _EMOJI.sub("", title).split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > max_chars:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1].rstrip(".,!?") + "…"
+    return lines
+
+
+async def add_hook_title(src: Path, dst: Path, title: str) -> Path:
+    """Escreve o título-gancho fixo no topo do vídeo vertical já pronto."""
+    lines = wrap_title(title)
+    if not lines:
+        return src
+    top = TITLE_CENTER_Y - (len(lines) * TITLE_LINE_H) // 2
+    filters = []
+    for i, line in enumerate(lines):
+        txt = dst.with_name(f"title_{i}.txt")
+        txt.write_text(line, encoding="utf-8")  # arquivo evita problemas de escape
+        filters.append(
+            f"drawtext=fontfile={FONT}:textfile='{txt.as_posix()}':fontcolor=white:"
+            f"fontsize={TITLE_SIZE}:borderw=6:bordercolor=black:"
+            f"x=(w-text_w)/2:y={top + i * TITLE_LINE_H}")
+    await run("ffmpeg", "-y", "-i", str(src), "-vf", ",".join(filters),
+              "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+              "-c:a", "copy", "-movflags", "+faststart", str(dst), timeout=600)
     return dst
 
 

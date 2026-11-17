@@ -12,7 +12,7 @@ from ..core.config import Settings
 from ..core.db import DB
 from ..core.models import Candidate, State, is_expired
 from ..core.timeutil import local_day, local_midnight_utc, utcnow
-from ..processing.ffmpeg import make_preview
+from ..processing.ffmpeg import add_hook_title, make_preview
 from .caption import build_caption
 from .platforms.base import PublishJob
 from .policy import can_post_now, daily_limit, pick_next
@@ -36,7 +36,8 @@ MAX_ATTEMPTS_PER_CLIP = 3
 class Scheduler:
     def __init__(self, db: DB, cfg: Settings, publishers: list, media, notifier: Notifier,
                  now_fn: Callable[[], datetime] = utcnow,
-                 preview_fn: Callable[[Path, Path], Awaitable[Path]] = make_preview):
+                 preview_fn: Callable[[Path, Path], Awaitable[Path]] = make_preview,
+                 title_fn: Callable[[Path, Path, str], Awaitable[Path]] = add_hook_title):
         self.db = db
         self.cfg = cfg
         self.publishers = publishers
@@ -44,6 +45,7 @@ class Scheduler:
         self.notifier = notifier
         self.now_fn = now_fn
         self.preview_fn = preview_fn
+        self.title_fn = title_fn
         self.fail_streak = 0
         self.retry_at: datetime | None = None
         self.attempts: dict[int, int] = {}
@@ -89,6 +91,7 @@ class Scheduler:
     async def publish(self, c: Candidate, now: datetime) -> None:
         verdict = Verdict.model_validate_json(c.ai_json)
         caption = build_caption(verdict, c.platform, c.channel)
+        await self._apply_title(c, verdict.title)
         if self.cfg.dry_run:
             await self._dry_run(c, verdict, caption, now)
             return
@@ -140,6 +143,17 @@ class Scheduler:
         await self.notifier.alert(
             f"Nenhuma plataforma aceitou o post. Publicações em espera; "
             f"tentando de novo em {wait} min. Erro: {reason}")
+
+    async def _apply_title(self, c: Candidate, title: str) -> None:
+        """Título-gancho no topo; se falhar, segue com o vídeo sem título."""
+        src = Path(c.vertical_path)
+        if not title or src.name == "final.mp4":
+            return
+        try:
+            c.vertical_path = str(await self.title_fn(src, src.with_name("final.mp4"), title))
+            self.db.update(c)
+        except Exception as e:
+            log.warning("título-gancho falhou em %s: %s", c.clip_id, e)
 
     async def _dry_run(self, c: Candidate, verdict: Verdict, caption: str,
                        now: datetime) -> None:

@@ -56,3 +56,12 @@ async def test_render_vertical_and_frames(tmp_path: Path):
     assert len(frames) == 8
     fewer = await extract_frames(src, tmp_path / "frames", 3)  # mesma pasta, outro clipe
     assert len(fewer) == 3  # nada de frames que sobraram da extração anterior
+
+
+def test_wrap_title():
+    from liveclips.processing.ffmpeg import wrap_title
+
+    assert wrap_title("Ele caiu do prédio 😂") == ["Ele caiu do prédio"]
+    assert wrap_title("Pagou uma do job para o gago e deu ruim demais") == [
+        "Pagou uma do job", "para o gago e deu…"]
+    assert wrap_title("🔥🔥") == []
