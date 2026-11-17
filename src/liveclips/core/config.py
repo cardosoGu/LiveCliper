@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -23,7 +24,8 @@ class Settings:
     kick_enabled: bool
     kick_category_slug: str
     # IA
-    gemini_api_key: str
+    gemini_api_key: str  # a primeira chave (compatibilidade)
+    gemini_api_keys: tuple[str, ...]
     gemini_model: str
     anthropic_api_key: str
     claude_model: str
@@ -84,6 +86,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             raise ValueError(f"{key} deve ser off, private ou public (recebido: {v})")
         return v
 
+    # GEMINI_API_KEY e/ou GEMINI_API_KEY1, GEMINI_API_KEY2, ... em ordem de uso
+    numbered = sorted((int(m.group(1)), k) for k in e
+                      if (m := re.fullmatch(r"GEMINI_API_KEY(\d+)", k)))
+    gemini_keys = tuple(dict.fromkeys(
+        v for v in [s("GEMINI_API_KEY")] + [s(k) for _, k in numbered] if v))
+
     return Settings(
         data_dir=s("DATA_DIR", "/data"),
         port=i("PORT", 8080),
@@ -97,8 +105,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         twitch_game_name=s("TWITCH_GAME_NAME", "Grand Theft Auto VI"),
         kick_enabled=b("KICK_ENABLED", False),
         kick_category_slug=s("KICK_CATEGORY_SLUG", "grand-theft-auto-vi"),
-        gemini_api_key=s("GEMINI_API_KEY"),
-        gemini_model=s("GEMINI_MODEL", "gemini-3.5-flash,gemini-3.8-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite"),
+        gemini_api_key=(gemini_keys[0] if gemini_keys else ""),
+        gemini_api_keys=gemini_keys,
+        gemini_model=s("GEMINI_MODEL", "gemini-3.5-flash,gemini-3.8-flash"),
         anthropic_api_key=s("ANTHROPIC_API_KEY"),
         claude_model=s("CLAUDE_MODEL", "claude-opus-5-5"),
         claude_daily_budget_usd=f("CLAUDE_DAILY_BUDGET_USD", 3.0),

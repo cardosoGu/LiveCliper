@@ -41,7 +41,7 @@ class Evaluator:
 
     async def evaluate(self, video_path: Path, raw_path: Path, meta: dict) -> Verdict:
         prompt = build_prompt(meta)
-        if self.cfg.gemini_api_key:
+        if self.cfg.gemini_api_keys or self.cfg.gemini_api_key:
             try:
                 return parse_verdict(await self.gemini_fn(video_path, prompt))
             except Exception as e:

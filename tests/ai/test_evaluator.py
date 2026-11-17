@@ -121,3 +121,26 @@ async def test_gemini_all_models_failing_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(gemini, "_client", lambda key: type("C", (), {"models": Models()})())
     with pytest.raises(RuntimeError, match="todos os modelos"):
         await gemini.gemini_evaluate(cfg(GEMINI_MODEL="a,b"), video, "p")
+
+
+async def test_gemini_tries_every_key_before_next_model(tmp_path, monkeypatch):
+    from liveclips.ai import gemini
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+    tried = []
+
+    def client(key):
+        class Models:
+            def generate_content(self, model, contents, config):
+                tried.append((model, key))
+                if (model, key) != ("m2", "k1"):
+                    raise RuntimeError("429")
+                return type("R", (), {"text": GOOD})()
+        return type("C", (), {"models": Models()})()
+
+    monkeypatch.setattr(gemini, "_client", client)
+    c = load_settings({"GEMINI_API_KEY1": "k1", "GEMINI_API_KEY2": "k2", "GEMINI_API_KEY3": "k3",
+                       "GEMINI_MODEL": "m1,m2"})
+    assert await gemini.gemini_evaluate(c, video, "p") == GOOD
+    assert tried == [("m1", "k1"), ("m1", "k2"), ("m1", "k3"), ("m2", "k1")]

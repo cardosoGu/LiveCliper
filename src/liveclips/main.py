@@ -35,8 +35,8 @@ def check_settings(cfg: Settings) -> list[str]:
         ("TWITCH_CLIENT_ID", cfg.twitch_client_id),
         ("TWITCH_CLIENT_SECRET", cfg.twitch_client_secret),
     ] if not value]
-    if not (cfg.gemini_api_key or cfg.anthropic_api_key):
-        missing.append("GEMINI_API_KEY ou ANTHROPIC_API_KEY")
+    if not (cfg.gemini_api_keys or cfg.anthropic_api_key):
+        missing.append("GEMINI_API_KEY1 (ou GEMINI_API_KEY) ou ANTHROPIC_API_KEY")
     return missing
 
 
