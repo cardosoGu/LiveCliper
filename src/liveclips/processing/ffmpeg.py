@@ -107,8 +107,8 @@ TITLE_LINE_H = 92
 TITLE_CENTER_Y = 420  # faixa de cima, entre o crédito (y=200) e o jogo (começa em ~656)
 
 
-def wrap_title(title: str, max_chars: int = 20, max_lines: int = 2) -> list[str]:
-    """Quebra o título em até 2 linhas curtas, sem emoji (a fonte não desenha emoji)."""
+def wrap_title(title: str, max_chars: int = 24, max_lines: int = 3) -> list[str]:
+    """Quebra o título em até 3 linhas curtas, sem emoji (a fonte não desenha emoji)."""
     words = _EMOJI.sub("", title).split()
     lines: list[str] = []
     cur = ""
