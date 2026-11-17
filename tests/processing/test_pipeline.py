@@ -43,11 +43,15 @@ def fake_ops(fail_download=False, speech=("olha", "pt")):
         return Transcript([{"start": 0, "end": 1, "text": text}], lang)
 
     async def render(src, dst, credit, srt):
-        assert credit == "twitch.tv/gaules" and srt is not None
+        assert credit == "twitch.tv/gaules" and srt.suffix == ".ass"
+        assert "Dialogue:" in srt.read_text(encoding="utf-8")
         dst.write_bytes(b"v")
         return dst
 
-    return MediaOps(download, extract_audio, transcribe, render)
+    async def probe(path):
+        return 1920, 1080
+
+    return MediaOps(download, extract_audio, transcribe, render, probe)
 
 
 def make_pipeline(db, tmp_path, result, ops=None, **env):

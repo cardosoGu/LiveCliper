@@ -31,6 +31,13 @@ async def probe_duration(path: Path) -> float:
     return float(out.strip())
 
 
+async def probe_dimensions(path: Path) -> tuple[int, int]:
+    out = await run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                    "stream=width,height", "-of", "csv=p=0", str(path))
+    w, h = out.strip().splitlines()[0].split(",")[:2]
+    return int(w), int(h)
+
+
 async def extract_audio(src: Path, dst: Path) -> Path:
     await run("ffmpeg", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
               "-b:a", "48k", str(dst))
@@ -46,10 +53,8 @@ def build_filter(credit: str, srt_path: str | None) -> str:
         f"[base]drawtext=fontfile={FONT}:text='{credit}':fontcolor=white:fontsize=44:"
         "x=(w-text_w)/2:y=200:box=1:boxcolor=black@0.55:boxborderw=14[cred]",
     ]
-    if srt_path:
-        parts.append(
-            f"[cred]subtitles=filename='{srt_path}':force_style='FontName=DejaVu Sans,"
-            "FontSize=13,Bold=1,Outline=2,Alignment=2,MarginV=70'[v]")
+    if srt_path:  # arquivo .ass: estilo, tamanho e posição vêm do próprio arquivo
+        parts.append(f"[cred]subtitles=filename='{srt_path}'[v]")
     else:
         parts.append("[cred]null[v]")
     return ";".join(parts)

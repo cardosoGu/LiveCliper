@@ -23,6 +23,7 @@ MIN_WORDS_TO_TRUST_LANGUAGE = 5
 class Transcript:
     segments: list[dict] = field(default_factory=list)
     language: str | None = None  # código ou nome devolvido pelo Whisper
+    words: list[dict] = field(default_factory=list)  # {"word", "start", "end"} por palavra
 
     @property
     def text(self) -> str:
@@ -35,31 +36,12 @@ class Transcript:
         return self.language.strip().lower() not in PORTUGUESE
 
 
-def _ts(t: float) -> str:
-    ms = int(round(t * 1000))
-    h, ms = divmod(ms, 3_600_000)
-    m, ms = divmod(ms, 60_000)
-    s, ms = divmod(ms, 1000)
-    return f"{h:02}:{m:02}:{s:02},{ms:03}"
-
-
-def segments_to_srt(segments: list[dict]) -> str:
-    lines: list[str] = []
-    n = 1
-    for seg in segments:
-        text = seg["text"].strip()
-        if not text:
-            continue
-        lines += [str(n), f"{_ts(seg['start'])} --> {_ts(seg['end'])}", text, ""]
-        n += 1
-    return "\n".join(lines)
-
-
 async def transcribe_groq(audio: Path, api_key: str, http: httpx.AsyncClient) -> Transcript:
     r = await http.post(
         GROQ_URL,
         headers={"Authorization": f"Bearer {api_key}"},
-        data={"model": "whisper-large-v3", "response_format": "verbose_json"},
+        data={"model": "whisper-large-v3", "response_format": "verbose_json",
+              "timestamp_granularities[]": ["word", "segment"]},
         files={"file": (audio.name, audio.read_bytes(), "audio/mpeg")},
         timeout=60,
     )
@@ -67,7 +49,9 @@ async def transcribe_groq(audio: Path, api_key: str, http: httpx.AsyncClient) ->
     j = r.json()
     segs = [{"start": s["start"], "end": s["end"], "text": s["text"]}
             for s in j.get("segments", [])]
-    return Transcript(segs, j.get("language"))
+    words = [{"word": w["word"], "start": w["start"], "end": w["end"]}
+             for w in j.get("words", [])]
+    return Transcript(segs, j.get("language"), words)
 
 
 def _transcribe_local_sync(audio: Path) -> Transcript:
@@ -76,9 +60,12 @@ def _transcribe_local_sync(audio: Path) -> Transcript:
 
     if _LOCAL_MODEL is None:
         _LOCAL_MODEL = WhisperModel("small", device="cpu", compute_type="int8")
-    segs, info = _LOCAL_MODEL.transcribe(str(audio), vad_filter=True)
-    return Transcript([{"start": s.start, "end": s.end, "text": s.text} for s in segs],
-                      info.language)
+    segs, info = _LOCAL_MODEL.transcribe(str(audio), vad_filter=True, word_timestamps=True)
+    segments, words = [], []
+    for s in segs:
+        segments.append({"start": s.start, "end": s.end, "text": s.text})
+        words += [{"word": w.word, "start": w.start, "end": w.end} for w in (s.words or [])]
+    return Transcript(segments, info.language, words)
 
 
 async def transcribe_local(audio: Path) -> Transcript:

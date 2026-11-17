@@ -17,7 +17,8 @@ from ..core.models import Candidate, State, is_expired
 from ..core.timeutil import local_day, utcnow
 from . import transcribe as tr
 from .download import download_clip
-from .ffmpeg import extract_audio, render_vertical
+from .ffmpeg import extract_audio, probe_dimensions, render_vertical
+from .subtitles import build_cues, cues_to_ass, words_from_segments
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class MediaOps:
     extract_audio: Callable[[Path, Path], Awaitable[Path]] = extract_audio
     transcribe: Callable[..., Awaitable[tr.Transcript]] = tr.transcribe
     render: Callable[..., Awaitable[Path]] = render_vertical
+    probe: Callable[[Path], Awaitable[tuple[int, int]]] = probe_dimensions
 
 
 @dataclass
@@ -116,9 +118,12 @@ class Pipeline:
                       f"fala detectada em '{transcript.language}', não em português")
             return None
         srt = None
-        if transcript.segments:
-            srt = work / "subs.srt"
-            srt.write_text(tr.segments_to_srt(transcript.segments), encoding="utf-8")
+        words = transcript.words or words_from_segments(transcript.segments)
+        cues = build_cues(words)
+        if cues:
+            src_w, src_h = await self.ops.probe(raw)
+            srt = work / "subs.ass"
+            srt.write_text(cues_to_ass(cues, src_w, src_h), encoding="utf-8")
         credit = credit_text(c.platform, c.channel)
         vertical = await self.ops.render(raw, work / "vertical.mp4", credit, srt)
         c.vertical_path = str(vertical)

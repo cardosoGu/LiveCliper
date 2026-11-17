@@ -17,8 +17,8 @@ def test_credit_text_sanitizes():
 
 
 def test_build_filter_with_and_without_subtitles():
-    with_srt = build_filter("twitch.tv/a", "/data/1/subs.srt")
-    assert "subtitles=filename='/data/1/subs.srt'" in with_srt
+    with_srt = build_filter("twitch.tv/a", "/data/1/subs.ass")
+    assert "subtitles=filename='/data/1/subs.ass'[v]" in with_srt
     assert "text='twitch.tv/a'" in with_srt
     assert with_srt.endswith("[v]")
     without = build_filter("twitch.tv/a", None)
