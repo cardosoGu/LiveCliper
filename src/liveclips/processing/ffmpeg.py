@@ -40,16 +40,9 @@ async def probe_dimensions(path: Path) -> tuple[int, int]:
 
 
 async def concat_clips(parts: list[Path], dst: Path) -> Path:
-    """Junta clipes seguidos do mesmo canal. Tenta sem recodificar (mesma origem);
-    se falhar, recodifica na resolução do primeiro."""
-    listing = dst.with_suffix(".txt")
-    listing.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")
-    try:
-        await run("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
-                  "-c", "copy", "-movflags", "+faststart", str(dst), timeout=120)
-        return dst
-    except MediaError:
-        pass
+    """Junta clipes seguidos do mesmo canal, sempre recodificando na resolução do
+    primeiro: copiar sem recodificar deixava o vídeo congelado após o 1º clipe
+    (carimbos de tempo do 2º clipe não continuam os do 1º)."""
     w, h = await probe_dimensions(parts[0])
     inputs, chains, pads = [], [], ""
     for i, p in enumerate(parts):
@@ -77,8 +70,8 @@ def build_filter(credit: str, srt_path: str | None) -> str:
         "crop=1080:1920,boxblur=20:2[bg]",
         "[0:v]scale=1080:-2[fg]",
         "[bg][fg]overlay=(W-w)/2:(H-h)/2[base]",
-        f"[base]drawtext=fontfile={FONT}:text='{credit}':fontcolor=white:fontsize=44:"
-        "x=(w-text_w)/2:y=200:box=1:boxcolor=black@0.55:boxborderw=14[cred]",
+        f"[base]drawtext=fontfile={FONT}:text='{credit}':fontcolor=white:fontsize=38:"
+        "x=(w-text_w)/2:y=h-170:box=1:boxcolor=black@0.55:boxborderw=12[cred]",
     ]
     if srt_path:  # arquivo .ass: estilo, tamanho e posição vêm do próprio arquivo
         parts.append(f"[cred]subtitles=filename='{srt_path}'[v]")
@@ -102,12 +95,13 @@ async def render_vertical(src: Path, dst: Path, credit: str,
 
 
 _EMOJI = re.compile("[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F\u200D]")
-TITLE_SIZE = 72
-TITLE_LINE_H = 92
-TITLE_CENTER_Y = 420  # faixa de cima, entre o crédito (y=200) e o jogo (começa em ~656)
+TITLE_SIZE = 66
+TITLE_LINE_H = 112
+TITLE_CENTER_Y = 330  # faixa de cima, acima do jogo (que começa em ~656)
+TITLE_BOX = "0xE50914@0.92"  # faixa vermelha atrás de cada linha
 
 
-def wrap_title(title: str, max_chars: int = 24, max_lines: int = 3) -> list[str]:
+def wrap_title(title: str, max_chars: int = 20, max_lines: int = 3) -> list[str]:
     """Quebra o título em até 3 linhas curtas, sem emoji (a fonte não desenha emoji)."""
     words = _EMOJI.sub("", title).split()
     lines: list[str] = []
@@ -128,7 +122,7 @@ def wrap_title(title: str, max_chars: int = 24, max_lines: int = 3) -> list[str]
 
 async def add_hook_title(src: Path, dst: Path, title: str) -> Path:
     """Escreve o título-gancho fixo no topo do vídeo vertical já pronto."""
-    lines = wrap_title(title)
+    lines = [ln.upper() for ln in wrap_title(title)]
     if not lines:
         return src
     top = TITLE_CENTER_Y - (len(lines) * TITLE_LINE_H) // 2
@@ -138,7 +132,8 @@ async def add_hook_title(src: Path, dst: Path, title: str) -> Path:
         txt.write_text(line, encoding="utf-8")  # arquivo evita problemas de escape
         filters.append(
             f"drawtext=fontfile={FONT}:textfile='{txt.as_posix()}':fontcolor=white:"
-            f"fontsize={TITLE_SIZE}:borderw=6:bordercolor=black:"
+            f"fontsize={TITLE_SIZE}:borderw=3:bordercolor=black:"
+            f"box=1:boxcolor={TITLE_BOX}:boxborderw=18:"
             f"x=(w-text_w)/2:y={top + i * TITLE_LINE_H}")
     await run("ffmpeg", "-y", "-i", str(src), "-vf", ",".join(filters),
               "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",

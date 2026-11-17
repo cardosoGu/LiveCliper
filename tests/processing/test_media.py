@@ -63,6 +63,6 @@ def test_wrap_title():
 
     assert wrap_title("Ele caiu do prédio 😂") == ["Ele caiu do prédio"]
     assert wrap_title("Aula de biologia virou experimento maluco") == [
-        "Aula de biologia virou", "experimento maluco"]
+        "Aula de biologia", "virou experimento", "maluco"]
     assert len(wrap_title("um dois tres quatro cinco seis sete oito nove dez onze doze treze")) == 3
     assert wrap_title("🔥🔥") == []
