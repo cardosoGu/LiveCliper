@@ -95,13 +95,12 @@ async def render_vertical(src: Path, dst: Path, credit: str,
 
 
 _EMOJI = re.compile("[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F\u200D]")
-TITLE_SIZE = 66
-TITLE_LINE_H = 112
-TITLE_CENTER_Y = 330  # faixa de cima, acima do jogo (que começa em ~656)
-TITLE_BOX = "0xE50914@0.92"  # faixa vermelha atrás de cada linha
+TITLE_FONT = "Montserrat Black"  # cai para Montserrat/DejaVu se não houver
+TITLE_SIZE = 82
+TITLE_TOP = 170  # topo do bloco de título; o jogo começa em ~656
 
 
-def wrap_title(title: str, max_chars: int = 20, max_lines: int = 3) -> list[str]:
+def wrap_title(title: str, max_chars: int = 18, max_lines: int = 3) -> list[str]:
     """Quebra o título em até 3 linhas curtas, sem emoji (a fonte não desenha emoji)."""
     words = _EMOJI.sub("", title).split()
     lines: list[str] = []
@@ -121,21 +120,27 @@ def wrap_title(title: str, max_chars: int = 20, max_lines: int = 3) -> list[str]
 
 
 async def add_hook_title(src: Path, dst: Path, title: str) -> Path:
-    """Escreve o título-gancho fixo no topo do vídeo vertical já pronto."""
+    """Título-gancho fixo no topo: Montserrat grossa, contorno preto e sombra,
+    linhas alternando branco e amarelo."""
     lines = [ln.upper() for ln in wrap_title(title)]
     if not lines:
         return src
-    top = TITLE_CENTER_Y - (len(lines) * TITLE_LINE_H) // 2
-    filters = []
-    for i, line in enumerate(lines):
-        txt = dst.with_name(f"title_{i}.txt")
-        txt.write_text(line, encoding="utf-8")  # arquivo evita problemas de escape
-        filters.append(
-            f"drawtext=fontfile={FONT}:textfile='{txt.as_posix()}':fontcolor=white:"
-            f"fontsize={TITLE_SIZE}:borderw=3:bordercolor=black:"
-            f"box=1:boxcolor={TITLE_BOX}:boxborderw=18:"
-            f"x=(w-text_w)/2:y={top + i * TITLE_LINE_H}")
-    await run("ffmpeg", "-y", "-i", str(src), "-vf", ",".join(filters),
+    colors = ["&H00FFFFFF&", "&H0000D4FF&"]  # branco, amarelo (BGR)
+    text = "\\N".join(f"{{\\c{colors[i % 2]}}}{ln.replace('{', '(').replace('}', ')')}"
+                       for i, ln in enumerate(lines))
+    ass = dst.with_name("title.ass")
+    ass.write_text("\n".join([
+        "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
+        "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: Title,{TITLE_FONT},{TITLE_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,"
+        "-1,0,0,0,100,100,0,0,1,8,6,8,60,60,{TITLE_TOP},1".replace("{TITLE_TOP}", str(TITLE_TOP)),
+        "", "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        f"Dialogue: 0,0:00:00.00,9:59:59.00,Title,,0,0,0,,{text}", ""]), encoding="utf-8")
+    await run("ffmpeg", "-y", "-i", str(src), "-vf", f"subtitles=filename='{ass.as_posix()}'",
               "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
               "-c:a", "copy", "-movflags", "+faststart", str(dst), timeout=600)
     return dst

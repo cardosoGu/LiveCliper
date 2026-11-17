@@ -10,7 +10,7 @@ def test_cues_are_short_and_never_overlap():
     words = [w(x, i * 0.3, i * 0.3 + 0.25) for i, x in
              enumerate("com essas glândulas atrofiadas juntamente com o megamiceto a gente".split())]
     cues = build_cues(words)
-    assert all(len(c.text.split()) <= 5 and len(c.text) <= 30 for c in cues)
+    assert all(len(c.text.split()) <= 3 and len(c.text) <= 20 for c in cues)
     assert all(a.end <= b.start for a, b in zip(cues, cues[1:]))
     assert " ".join(c.text for c in cues) == " ".join(x["word"] for x in words)
 
@@ -49,4 +49,13 @@ def test_position_falls_back_for_tall_video():
 def test_ass_uses_real_pixels_and_escapes():
     ass = cues_to_ass([Cue(1.5, 3.25, "olha {isso}")], 1920, 1080)
     assert "PlayResY: 1920" in ass and "PlayResX: 1080" in ass
-    assert "Dialogue: 0,0:00:01.50,0:00:03.25,Default,,0,0,0,,olha (isso)" in ass
+    assert "Dialogue: 0,0:00:01.50,0:00:03.25,Default,,0,0,0,,OLHA (ISSO)" in ass
+
+
+def test_karaoke_highlights_each_spoken_word():
+    cue = build_cues([w("mano", 0.0, 0.4), w("olha", 0.5, 0.9)])[0]
+    ass = cues_to_ass([cue], 1920, 1080)
+    lines = [ln for ln in ass.splitlines() if ln.startswith("Dialogue")]
+    assert len(lines) == 2  # um evento por palavra
+    assert "0:00:00.00,0:00:00.50" in lines[0] and "}MANO{" in lines[0] and lines[0].endswith(" OLHA")
+    assert lines[1].startswith("Dialogue: 0,0:00:00.50") and "}OLHA{" in lines[1]

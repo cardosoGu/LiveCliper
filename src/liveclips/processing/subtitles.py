@@ -6,23 +6,26 @@ de altura e uma fonte "13" vira ~87 px.)
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 CANVAS_W, CANVAS_H = 1080, 1920
-FONT = "DejaVu Sans"
-FONT_SIZE = 62
+FONT = "Montserrat"
+FONT_SIZE = 72
 LINE_H = round(FONT_SIZE * 1.25)
 MAX_LINES = 2
 GAP_BELOW_VIDEO = 36
 SIDE_MARGIN = 70
 BOTTOM_SAFE = 140  # se não couber abaixo do jogo, fica sobre a base dele, longe da borda
 
-MAX_WORDS = 5
-MAX_CHARS = 30  # ~2 linhas na fonte acima
+MAX_WORDS = 3
+MAX_CHARS = 20  # 1-2 linhas curtas, estilo Shorts
 MAX_CUE_S = 2.6
 MAX_GAP_S = 0.6
 MIN_CUE_S = 0.35
 SENTENCE_END = ".!?…"
+
+
+HIGHLIGHT = "&H00FF5FC8&"  # roxo/rosa (ASS usa BGR) na palavra que está sendo falada
 
 
 @dataclass
@@ -30,6 +33,7 @@ class Cue:
     start: float
     end: float
     text: str
+    words: list = field(default_factory=list)  # [(palavra, início, fim)] para o destaque
 
 
 def words_from_segments(segments: list[dict]) -> list[dict]:
@@ -58,7 +62,8 @@ def build_cues(words: list[dict]) -> list[Cue]:
     def flush() -> None:
         if cur:
             cues.append(Cue(cur[0]["start"], cur[-1]["end"],
-                            " ".join(w["word"] for w in cur)))
+                            " ".join(w["word"] for w in cur),
+                            [(w["word"], w["start"], w["end"]) for w in cur]))
             cur.clear()
 
     for w in words:
@@ -120,12 +125,25 @@ def cues_to_ass(cues: list[Cue], src_w: int, src_h: int) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,{FONT},{FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,5,1,{align},{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1",
+        f"Style: Default,{FONT},{FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
+        f"-1,0,0,0,100,100,0,0,1,6,3,{align},{SIDE_MARGIN},{SIDE_MARGIN},{margin_v},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ])
-    events = [f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},Default,,0,0,0,,"
-              f"{_ass_text(c.text)}" for c in cues]
+    events = []
+    for c in cues:
+        if not c.words:
+            events.append(f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},Default,,0,0,0,,"
+                          f"{_ass_text(c.text).upper()}")
+            continue
+        # estilo karaokê: o bloco inteiro na tela, a palavra falada em destaque
+        for i, (_, start, _end) in enumerate(c.words):
+            end = c.words[i + 1][1] if i + 1 < len(c.words) else c.end
+            parts = []
+            for j, (w, _s, _e) in enumerate(c.words):
+                w = _ass_text(w).upper()
+                parts.append(f"{{\\c{HIGHLIGHT}\\fscx112\\fscy112}}{w}{{\\r}}" if j == i else w)
+            events.append(f"Dialogue: 0,{_ass_time(max(start, c.start))},{_ass_time(max(end, start + 0.05))},"
+                          f"Default,,0,0,0,,{' '.join(parts)}")
     return header + "\n" + "\n".join(events) + "\n"
