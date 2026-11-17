@@ -22,6 +22,7 @@ class FakeEvaluator:
 
     async def evaluate(self, video, raw, meta):
         self.calls += 1
+        self.videos = (video, raw)
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -42,16 +43,10 @@ def fake_ops(fail_download=False, speech=("olha", "pt")):
         text, lang = speech
         return Transcript([{"start": 0, "end": 1, "text": text}], lang)
 
-    async def render(src, dst, credit, srt):
-        assert credit == "twitch.tv/gaules" and srt.suffix == ".ass"
-        assert "Dialogue:" in srt.read_text(encoding="utf-8")
-        dst.write_bytes(b"v")
-        return dst
-
     async def probe(path):
         return 1920, 1080
 
-    return MediaOps(download, extract_audio, transcribe, render, probe)
+    return MediaOps(download, extract_audio, transcribe, probe)
 
 
 def make_pipeline(db, tmp_path, result, ops=None, **env):
@@ -69,7 +64,11 @@ async def test_good_clip_is_queued(db, tmp_path: Path):
     assert await p.tick() == 1
     got = db.get(c.id)
     assert got.state is State.QUEUED and got.ai_score == 8.0
-    assert got.transcript == "olha" and Path(got.vertical_path).exists()
+    assert got.transcript == "olha" and Path(got.raw_path).exists()
+    # o vertical só é renderizado depois de aprovado (no scheduler); a IA vê o original
+    assert got.vertical_path is None
+    assert p.evaluator.videos == (Path(got.raw_path), Path(got.raw_path))
+    assert "Dialogue:" in (Path(got.raw_path).parent / "subs.ass").read_text(encoding="utf-8")
     assert p.evals_today() == 1
 
 
@@ -91,7 +90,7 @@ async def test_ai_unavailable_keeps_detected_and_media(db, tmp_path):
     await p.tick()
     got = db.get(c.id)
     assert got.state is State.DETECTED and p.ai_down
-    assert Path(got.vertical_path).exists()
+    assert Path(got.raw_path).exists() and got.transcript == "olha"
     assert p.evals_today() == 0
 
 
@@ -130,3 +129,4 @@ async def test_foreign_speech_rejected_before_ai(db, tmp_path):
     assert got.state is State.REJECTED_AI and "english" in got.reason
     assert p.evaluator.calls == 0 and p.evals_today() == 0
     assert got.vertical_path is None  # nem renderiza
+    assert not (Path(got.raw_path).parent / "subs.ass").exists()

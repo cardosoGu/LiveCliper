@@ -1,4 +1,8 @@
-"""Leva candidatos de `detected` até `queued` (ou rejeitado): mídia, legenda e IA."""
+"""Leva candidatos de `detected` até `queued` (ou rejeitado): mídia, legenda e IA.
+
+Aqui NÃO se renderiza o vertical: a IA avalia o vídeo original (e devolve onde está a
+webcam), e o render final (tela dividida + título) só roda nos clipes aprovados.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -11,13 +15,12 @@ import httpx
 
 from ..ai.evaluator import AIUnavailable, Evaluator
 from ..core.config import Settings
-from ..core.credits import credit_text
 from ..core.db import DB
 from ..core.models import Candidate, State, is_expired
 from ..core.timeutil import local_day, utcnow
 from . import transcribe as tr
 from .download import download_clip
-from .ffmpeg import concat_clips, extract_audio, probe_dimensions, render_vertical
+from .ffmpeg import concat_clips, extract_audio, probe_dimensions
 from .subtitles import build_cues, cues_to_ass, words_from_segments
 
 log = logging.getLogger(__name__)
@@ -28,7 +31,6 @@ class MediaOps:
     download: Callable[[str, Path], Awaitable[Path]] = download_clip
     extract_audio: Callable[[Path, Path], Awaitable[Path]] = extract_audio
     transcribe: Callable[..., Awaitable[tr.Transcript]] = tr.transcribe
-    render: Callable[..., Awaitable[Path]] = render_vertical
     probe: Callable[[Path], Awaitable[tuple[int, int]]] = probe_dimensions
     concat: Callable[[list[Path], Path], Awaitable[Path]] = concat_clips
 
@@ -77,7 +79,7 @@ class Pipeline:
         work = self.media_dir / str(c.id)
         language = None
         try:
-            if not (c.vertical_path and Path(c.vertical_path).exists()):
+            if not (c.raw_path and Path(c.raw_path).exists() and c.transcript is not None):
                 transcript = await self._prepare_media(c, work)
                 if transcript is None:
                     return  # rejeitado antes da IA (fala em outro idioma)
@@ -85,7 +87,7 @@ class Pipeline:
             meta = {"platform": c.platform, "channel": c.channel, "viewers": c.viewers,
                     "source": c.source, "transcript": c.transcript or "",
                     "language": language}
-            verdict = await self.evaluator.evaluate(Path(c.vertical_path), Path(c.raw_path), meta)
+            verdict = await self.evaluator.evaluate(Path(c.raw_path), Path(c.raw_path), meta)
         except AIUnavailable:
             self.ai_down = True
             self._set(c, State.DETECTED, "IA indisponível, aguardando")
@@ -106,7 +108,7 @@ class Pipeline:
             log.info("na fila: %s (%s, nota %.1f)", c.clip_id, c.channel, verdict.score)
 
     async def _prepare_media(self, c: Candidate, work: Path) -> tr.Transcript | None:
-        """Baixa, transcreve e renderiza. Retorna None se o clipe foi rejeitado
+        """Baixa, transcreve e grava a legenda (subs.ass). Retorna None se o clipe foi rejeitado
         por idioma (economiza render e orçamento de IA)."""
         work.mkdir(parents=True, exist_ok=True)
         raw = await self.ops.download(c.clip_url, work / "raw.mp4")
@@ -124,16 +126,11 @@ class Pipeline:
             self._set(c, State.REJECTED_AI,
                       f"fala detectada em '{transcript.language}', não em português")
             return None
-        srt = None
         words = transcript.words or words_from_segments(transcript.segments)
         cues = build_cues(words)
         if cues:
             src_w, src_h = await self.ops.probe(raw)
-            srt = work / "subs.ass"
-            srt.write_text(cues_to_ass(cues, src_w, src_h), encoding="utf-8")
-        credit = credit_text(c.platform, c.channel)
-        vertical = await self.ops.render(raw, work / "vertical.mp4", credit, srt)
-        c.vertical_path = str(vertical)
+            (work / "subs.ass").write_text(cues_to_ass(cues, src_w, src_h), encoding="utf-8")
         self.db.update(c)
         return transcript
 

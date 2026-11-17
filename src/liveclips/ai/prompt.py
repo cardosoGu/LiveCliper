@@ -31,10 +31,16 @@ safe = false se houver QUALQUER um destes:
 - SPOILER de história: cutscene, missão da campanha, final, revelação de personagem.
 Violência e crimes DENTRO do jogo são normais em GTA e não tornam o clipe inseguro.
 
-title: até 60 caracteres, chamativo, sem mentir sobre o conteúdo, em PT-BR.
+title: gancho em PT-BR que aparece grande sobre a webcam nos primeiros 5 segundos.
+Escreva como PERGUNTA ou PROMESSA que dá vontade de ver o resto (ex.: "ELE VAI CONSEGUIR?", "ESPERA O FINAL...").
+No máximo ~35 caracteres (cabe em 2 linhas curtas), sem emoji, sem mentir sobre o conteúdo e sem entregar o desfecho.
 caption: 1 a 2 frases em PT-BR, tom de perfil de clipes, pode usar 1 ou 2 emojis.
 hashtags: 3 a 6, incluindo #GTA6.
-reason: 1 frase explicando a nota."""
+reason: 1 frase explicando a nota.
+facecam: retângulo da WEBCAM do streamer (o rosto/câmera sobreposto ao jogo), em frações de 0 a 1 do quadro
+ORIGINAL do jogo (x e y = canto superior esquerdo, w = largura, h = altura; ex.: webcam no canto inferior
+esquerdo ocupando 1/4 da largura: {"x": 0, "y": 0.7, "w": 0.25, "h": 0.3}). Inclua a moldura inteira da câmera.
+Use null se não houver webcam visível durante a maior parte do clipe."""
 
 
 def build_prompt(meta: dict) -> str:
