@@ -54,7 +54,7 @@ tests/ test_<módulo>.py, fixtures/kick_clips.json
 
 ### Tarefa 0: Viabilidade e contas (manual, paralelo às tarefas 1–4)
 - [ ] Docker Desktop instalado e rodando no Windows; suspensão automática do PC desativada para a noite do lançamento.
-- [ ] Ligar este repositório local ao repositório GitHub existente (`git remote add origin <url>`).
+- [x] Repositório local já ligado ao GitHub (`origin` = cardosoGu/LiveCliper).
 - [ ] App Twitch (redirect `http://localhost:3000`) + conta bot dedicada.
 - [ ] `curl -A "Mozilla/5.0" "https://kick.com/api/v2/categories/grand-theft-auto-vi/clips?sort=date&time=day"`: salvar a resposta real em `tests/fixtures/kick_clips.json`. Se retornar 403/HTML (anti-bot), manter `KICK_ENABLED=0` na v1.
 - [ ] Gemini: no AI Studio, subir um clipe vertical de 30 s e confirmar que o modelo descreve o vídeo.
