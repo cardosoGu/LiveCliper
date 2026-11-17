@@ -15,7 +15,7 @@
 - Sem IA disponível → não publica.
 - Claude: `claude-opus-5-5` por padrão (`CLAUDE_MODEL`), `effort: low`, structured output, teto `CLAUDE_DAILY_BUDGET_USD` (3.0); `fallbacks: "default"` só para modelos Opus/Sonnet/Fable.
 - Aquecimento: 45 min entre posts; 8 posts no dia 1, +2/dia até 20; fila expira em 90 min.
-- `DRY_RUN=1`: nunca chama publishers; envia prévia ao Telegram.
+- `DRY_RUN=1`: nunca chama publishers; envia prévia ao Discord.
 - Todos os parâmetros vêm de env (`.env.example` documenta cada um). Nada de caminho, domínio ou credencial no código.
 - HTTP escuta em `$PORT` (padrão 8080) com `GET /health`. URL pública, nesta ordem: `PUBLIC_BASE_URL` → `https://$RAILWAY_PUBLIC_DOMAIN` → hostname lido de `TUNNEL_METRICS_URL` (padrão `http://cloudflared:2000/quicktunnel`), relido antes de cada publicação. Refresh tokens rotativos persistem no kv e têm prioridade sobre o env.
 
@@ -42,7 +42,8 @@ src/liveclips/
   publishers/      __init__ (PublishJob, PostResult, PublishError, build_publishers), caption.py, instagram.py, tiktok.py, youtube.py
   media_server.py  MediaServer
   scheduler.py     daily_limit, can_post_now, pick_next, is_expired, Scheduler
-  telegram_bot.py  Telegram, Monitor
+  monitor.py       Monitor (lógica de comandos/ações, independente de transporte)
+  discord_bot.py   DiscordBot (discord.py: canal, botões, slash commands)
   supervisor.py    supervise
   main.py          amain() — liga tudo
 scripts/ twitch_oauth.py, calibrate_ai.py
@@ -58,7 +59,7 @@ tests/ test_<módulo>.py, fixtures/kick_clips.json
 - [ ] App Twitch (redirect `http://localhost:3000`) + conta bot dedicada.
 - [ ] `curl -A "Mozilla/5.0" "https://kick.com/api/v2/categories/grand-theft-auto-vi/clips?sort=date&time=day"`: salvar a resposta real em `tests/fixtures/kick_clips.json`. Se retornar 403/HTML (anti-bot), manter `KICK_ENABLED=0` na v1.
 - [ ] Gemini: no AI Studio, subir um clipe vertical de 30 s e confirmar que o modelo descreve o vídeo.
-- [ ] Bot do Telegram + chat id; chaves Gemini, Groq e Anthropic (créditos).
+- [ ] Bot do Discord (token, convidado ao servidor) + ID do canal + seu ID de usuário; chaves Gemini, Groq e Anthropic (créditos).
 - [ ] Instagram Business ligado a página FB; app Meta com `instagram_content_publish`; token longo (60 dias).
 - [ ] Enviar os pedidos de auditoria do TikTok (Direct Post) e do YouTube API.
 
@@ -133,22 +134,22 @@ tests/ test_<módulo>.py, fixtures/kick_clips.json
 **Produz:** `Scheduler(db, cfg, publishers, media, notifier, now_fn)` com `tick()`, `publish(c, now)` e `run()` (a cada 30 s). Respeita o kv `paused`, expira a fila, aplica daily_limit/can_post_now/pick_next, publica em cada plataforma de forma independente, grava publications, marca `first_post_day`, published ou failed, e notifica. DRY_RUN: não chama publishers, registra a plataforma `dry_run` e chama `notifier.dry_run_preview`.
 **Testes:** pausado não publica; o intervalo bloqueia; uma plataforma falhando não impede a outra; todas falhando → failed; dry run não chama publishers e envia prévia; a rampa usa `first_post_day`.
 
-### Tarefa 15: Telegram (monitor e freio)
-**Arquivos:** telegram_bot.py, tests/test_telegram.py
-**Produz:** `Telegram(token, chat_id, http)` com `send(text, buttons)`, `send_video(path, caption)`, `updates(offset)`, `answer_callback`; `Monitor(db, tg, publishers_by_name, cfg, channel_count, now_fn, clock)` com `alert` (dedup de 10 min), `post_published`, `dry_run_preview`, `handle_command` (/pause /resume /status /block /unblock /min_score), `handle_callback` (`del:<id>` apaga via publisher ou pede apagar manualmente; `block:<canal>`), `run()` (ignora outros chats).
-**Testes:** cada comando altera o kv/blocklist e responde; /min_score inválido; del chama publisher.delete e marca deleted; plataforma sem delete → instrução manual; alert deduplica; chat estranho ignorado.
+### Tarefa 15: Discord (monitor e freio)
+**Arquivos:** monitor.py, discord_bot.py, tests/test_monitor.py
+**Produz:** `Monitor(db, transport, publishers_by_name, cfg, channel_count, now_fn, clock)` com `alert(text)` (dedup de 10 min), `post_published(c, verdict, results, errors)`, `dry_run_preview(c, verdict, caption, preview_path)`, `handle_command(name, arg) -> str` (pause, resume, status, block, unblock, min_score), `async handle_action(custom_id) -> str` (`del:<id>` apaga via publisher ou pede apagar manualmente; `block:<canal>`). Transporte: protocolo `send(text, buttons: list[tuple[label, custom_id]] | None)` e `send_file(path, text)`. `DiscordBot(token, channel_id, admin_user_id)` implementa o transporte com discord.py, registra slash commands (`/pause /resume /status /block /unblock /min_score`) que chamam `handle_command`, e trata cliques de botão (`on_interaction`) chamando `handle_action`; ignora usuários que não sejam o admin; `run()` = `client.start(token)`. Prévia do dry run: `make_preview(src, dst)` em media.py (720p, bitrate limitado, < 10 MB).
+**Testes:** cada comando altera o kv/blocklist e responde; min_score inválido; `del` chama publisher.delete e marca deleted; plataforma sem delete → instrução manual; alert deduplica; post_published envia botões com os custom_ids certos (transporte falso). O DiscordBot é validado manualmente na Tarefa 16.
 
 ### Tarefa 16: Supervisor, main, Docker e execução local
 **Arquivos:** supervisor.py, main.py, Dockerfile, docker-compose.yml (serviço `app` com `env_file: .env`, volume `./data:/data`, `restart: unless-stopped`; serviço `cloudflared` com `cloudflare/cloudflared` rodando `tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://app:8080`), docs/run-local.md, tests/test_supervisor.py
-**Produz:** `supervise(name, factory, alert, sleep=asyncio.sleep, backoff_max=300)`; `amain()` liga: DB (reset_processing), TwitchAPI (refresh token persistido no kv), game_id, ChatMonitor→Clipper, discovery, coletores, Pipeline, Scheduler, MediaServer, Monitor, limpeza de mídia de hora em hora; mensagem de "iniciado" no Telegram.
+**Produz:** `supervise(name, factory, alert, sleep=asyncio.sleep, backoff_max=300)`; `amain()` liga: DB (reset_processing), TwitchAPI (refresh token persistido no kv), game_id, ChatMonitor→Clipper, discovery, coletores, Pipeline, Scheduler, MediaServer, Monitor, limpeza de mídia de hora em hora; mensagem de "iniciado" no canal do Discord.
 **Testes:** supervise reinicia após exceção, alerta e aumenta o backoff.
 **docs/run-local.md cobre:** copiar `.env.example` para `.env`; `docker compose up -d --build`; `docker compose logs -f app`; parar e atualizar; como obter cada token (Twitch via `scripts/twitch_oauth.py`, token longo do Instagram, TikTok/YouTube quando auditados); cuidados para a noite do lançamento (PC sem suspensão, cabo de rede).
-**Validação:** `DRY_RUN=1` + `TWITCH_GAME_NAME="Grand Theft Auto V"` → mensagem de início no Telegram, `/status` com canais monitorados, `curl https://<x>.trycloudflare.com/health` responde "ok"; reiniciar o compose preserva `./data`.
+**Validação:** `DRY_RUN=1` + `TWITCH_GAME_NAME="Grand Theft Auto V"` → mensagem de início no Discord, `/status` com canais monitorados, `curl https://<x>.trycloudflare.com/health` responde "ok"; reiniciar o compose preserva `./data`.
 
 ### Tarefa 17: Ensaio, calibração e lançamento (terça/quarta)
 **Arquivos:** scripts/calibrate_ai.py
 - [ ] `calibrate_ai.py <pasta> labels.csv` (arquivo, esperado publicar|rejeitar) roda o Evaluator e imprime a matriz de confusão e os falsos "publicar".
 - [ ] Juntar ~30 clipes de GTA V BR (incluindo spoiler, conteúdo impróprio, inglês e chatos) e calibrar o prompt e a nota até **zero falsos publicar**.
 - [ ] Rodar local com DRY_RUN=1 + GTA V por 1–2 h: medir picos/h, sucesso do Create Clip, latência ponta a ponta e qualidade visual; ajustar SPIKE_*, RANK_THRESHOLD e CLIP_RATE_SECONDS.
-- [ ] Publicar 1 Reel de teste real (DRY_RUN=0) e apagar pelo Telegram.
+- [ ] Publicar 1 Reel de teste real (DRY_RUN=0) e apagar pelo Discord.
 - [ ] Quarta 23:30: `TWITCH_GAME_NAME="Grand Theft Auto VI"`, DRY_RUN=0, `/status`.

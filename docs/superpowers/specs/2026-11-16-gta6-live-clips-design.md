@@ -24,7 +24,7 @@ Detectar automaticamente os melhores momentos das lives **brasileiras** de GTA 6
 |---|---|
 | Fonte | Categoria GTA 6, **somente lives em português (BR)**, Twitch + Kick |
 | Detecção | Pico de chat + Create Clip da Twitch; mais coleta de clipes criados pelo público |
-| Aprovação | **Nenhuma humana.** A IA decide; o Telegram serve só para monitorar e para o botão de emergência (pausar, apagar, bloquear) |
+| Aprovação | **Nenhuma humana.** A IA decide; o Discord serve só para monitorar e para o botão de emergência (pausar, apagar, bloquear) |
 | Conta | Perfis antigos, porém zerados (0 seguidores, 0 posts): aquecimento obrigatório com limite de posts |
 | Hospedagem | **Fase 1: local** no PC do usuário (Docker Compose + Cloudflare Tunnel). **Fase 2: Railway**, só depois que a fase 1 funcionar. Mesmo container, configurável só por variáveis de ambiente. |
 | IA | Gemini Flash (plano gratuito) — recebe o **vídeo**, não só o texto |
@@ -55,7 +55,7 @@ Detectar automaticamente os melhores momentos das lives **brasileiras** de GTA 6
 │                                   ▼                             │
 │ [publisher] Instagram Reels (público) · TikTok · YT Shorts      │
 │                                   ▼                             │
-│ [monitor] Telegram: aviso de cada post + /pause /delete /block  │
+│ [monitor] Discord: aviso de cada post + /pause /delete /block  │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,7 +63,7 @@ Um único app Python 3.12 (asyncio) com módulos isolados, cada um com uma respo
 
 ### Estados de um candidato
 `detected → processing (download, legenda, render, IA) → queued → published`
-Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além do prazo), `deleted` (removido via Telegram), `failed` (com motivo).
+Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além do prazo), `deleted` (removido via Discord), `failed` (com motivo).
 
 ## 4. Componentes
 
@@ -137,12 +137,12 @@ Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além
 - Quando abre uma vaga, publica o melhor da fila. Itens com mais de `QUEUE_TTL_MIN` (padrão 90 min) expiram, porque o momento perde a graça e outros perfis já postaram.
 - Nunca publica dois clipes do mesmo canal seguidos.
 
-### 4.10 monitor (Telegram) — não aprova, só observa e freia
-- Bot em modo polling, respondendo só ao `TELEGRAM_ADMIN_CHAT_ID`.
+### 4.10 monitor (Discord) — não aprova, só observa e freia
+- Bot do Discord (discord.py, conexão de saída — funciona mesmo com o túnel fora do ar) num canal dedicado (`DISCORD_CHANNEL_ID`). Só aceita comandos e cliques do `DISCORD_ADMIN_USER_ID`.
 - Avisa cada post publicado (link, nota, canal) com botões **🗑️ Apagar post** e **🚫 Bloquear canal**.
 - Comandos: `/pause` e `/resume` (para e retoma todas as publicações), `/status`, `/block canal`, `/unblock canal`, `/min_score N`.
 - Alertas: qualquer módulo que caia (falha de token, erro repetido de plataforma etc.), com no máximo 1 alerta igual a cada 10 min.
-- **Modo ensaio (`DRY_RUN=1`):** nada é publicado; o scheduler segue as mesmas regras, mas manda o vídeo final + legenda para o Telegram. Usado no ensaio com GTA V e na calibração.
+- **Modo ensaio (`DRY_RUN=1`):** nada é publicado; o scheduler segue as mesmas regras, mas manda uma prévia do vídeo (720p comprimida, < 10 MB) + legenda para o canal do Discord. Usado no ensaio com GTA V e na calibração.
 
 ### 4.11 publisher
 Publica em cada plataforma habilitada de forma independente (uma falhar não impede as outras).
@@ -159,7 +159,7 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 **Legenda publicada:** título + legenda + `🎥 Créditos: twitch.tv/<canal>` + hashtags.
 
 ### 4.12 blocklist e limpeza
-- A tabela `blocklist` (canal + motivo) é respeitada pela discovery, pelos coletores e pelo publisher. É editada pelo Telegram.
+- A tabela `blocklist` (canal + motivo) é respeitada pela discovery, pelos coletores e pelo publisher. É editada pelo Discord.
 - Arquivos de vídeo apagados após 48 h; banco mantido.
 
 ### 4.13 Hospedagem e portabilidade
@@ -170,14 +170,14 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 - Migrar de um lugar para o outro = copiar as variáveis (e, se quiser manter o histórico, o arquivo `/data/liveclips.db`).
 
 ## 5. Configuração (variáveis de ambiente / `.env`)
-`DATA_DIR`, `PORT`, `TUNNEL_METRICS_URL`, `TWITCH_GAME_NAME`, `DRY_RUN`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_REFRESH_TOKEN`, `KICK_ENABLED`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_DAILY_BUDGET_USD`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `IG_USER_ID`, `IG_ACCESS_TOKEN`, `TIKTOK_MODE` (`off`/`private`/`public`), `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `YT_MODE` (`off`/`private`/`public`, + credenciais OAuth), `PUBLIC_BASE_URL`, e os parâmetros de ajuste: `MONITOR_MAX_CHANNELS`, `SPIKE_MULTIPLIER`, `SPIKE_MIN_MSGS`, `CLIP_RATE_SECONDS`, `RANK_THRESHOLD`, `AI_DAILY_BUDGET`, `AI_MIN_SCORE`, `POST_MIN_INTERVAL_MIN`, `POST_MAX_PER_DAY`, `POST_MAX_PER_DAY_CAP`, `QUEUE_TTL_MIN`.
+`DATA_DIR`, `PORT`, `TUNNEL_METRICS_URL`, `TWITCH_GAME_NAME`, `DRY_RUN`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_REFRESH_TOKEN`, `KICK_ENABLED`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_DAILY_BUDGET_USD`, `GROQ_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ADMIN_USER_ID`, `IG_USER_ID`, `IG_ACCESS_TOKEN`, `TIKTOK_MODE` (`off`/`private`/`public`), `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `YT_MODE` (`off`/`private`/`public`, + credenciais OAuth), `PUBLIC_BASE_URL`, e os parâmetros de ajuste: `MONITOR_MAX_CHANNELS`, `SPIKE_MULTIPLIER`, `SPIKE_MIN_MSGS`, `CLIP_RATE_SECONDS`, `RANK_THRESHOLD`, `AI_DAILY_BUDGET`, `AI_MIN_SCORE`, `POST_MIN_INTERVAL_MIN`, `POST_MAX_PER_DAY`, `POST_MAX_PER_DAY_CAP`, `QUEUE_TTL_MIN`.
 
 ## 6. Tratamento de erros
 - Cada módulo roda em sua própria task asyncio com supervisor: exceção → log + reinício com backoff; os outros seguem.
 - Toda chamada externa com timeout e retentativa limitada; nada fica bloqueado indefinidamente.
-- Candidato que falha em qualquer etapa → estado `failed` + motivo, visível com `/status` no Telegram.
+- Candidato que falha em qualquer etapa → estado `failed` + motivo, visível com `/status` no Discord.
 - O `/status` mostra: canais monitorados, picos e clipes da última hora, cotas usadas no dia e erros recentes.
-- Tokens OAuth (Twitch, TikTok, Instagram) renovados automaticamente. Falha de renovação → alerta no Telegram.
+- Tokens OAuth (Twitch, TikTok, Instagram) renovados automaticamente. Falha de renovação → alerta no Discord.
 
 ## 7. Testes
 - **Unitários (pytest):** detector de pico (sequências sintéticas de chat), dedup, pré-ranking, scheduler (intervalo, rampa diária, TTL, mesmo canal seguido), montagem da legenda final, parsing/validação do JSON do Gemini, máquina de estados.
@@ -189,8 +189,8 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 
 | Risco | Mitigação |
 |---|---|
-| Denúncia/strike por usar conteúdo de terceiros | Crédito ao streamer, bloqueio e apagar via Telegram, edição transformativa. **Sem aprovação humana, o risco é maior; risco residual aceito pelo usuário.** |
-| IA publica algo impróprio ou spoiler | Critério `safe` rígido, nota mínima 7, calibração prévia com casos negativos, `/pause` e apagar pelo Telegram |
+| Denúncia/strike por usar conteúdo de terceiros | Crédito ao streamer, bloqueio e apagar via Discord, edição transformativa. **Sem aprovação humana, o risco é maior; risco residual aceito pelo usuário.** |
+| IA publica algo impróprio ou spoiler | Critério `safe` rígido, nota mínima 7, calibração prévia com casos negativos, `/pause` e apagar pelo Discord |
 | Rockstar/Take-Two derruba conteúdo do lançamento | Filtro de spoiler de história; foco em gameplay e reações |
 | Conta zerada marcada como spam | Aquecimento: intervalo mínimo e rampa diária de posts |
 | TikTok e YouTube sem auditoria = posts privados | Pedir as auditorias no dia 1; no lançamento, só o Instagram publica automaticamente |
@@ -201,12 +201,12 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 | Cotas gratuitas estouram no lançamento | Pré-ranking filtra antes da IA; fallback para o Claude (pago, com teto diário) e Whisper local |
 | SupoClip não roda em ARM ou não tem API adequada | Pipeline próprio com FFmpeg já definido como padrão |
 | PC desligado, sem internet ou dormindo durante o lançamento | Desativar suspensão do Windows; `restart: unless-stopped` no compose; fase 2 (Railway) se o local se mostrar instável |
-| Quick tunnel da Cloudflare cai ou muda de URL | O app relê a URL atual antes de cada publicação; falha no Instagram vira alerta no Telegram |
+| Quick tunnel da Cloudflare cai ou muda de URL | O app relê a URL atual antes de cada publicação; falha no Instagram vira alerta no Discord |
 
 ## 9. Pré-requisitos do usuário (fazer já)
 1. Docker Desktop instalado no PC (Windows). Repositório no GitHub já existe (fase 2: conectar ao Railway).
 2. Conta Twitch **bot** dedicada + app em dev.twitch.tv (client id/secret).
-3. Bot do Telegram (@BotFather) + seu chat id.
+3. Bot do Discord (Developer Portal → token), convidado ao servidor com permissão de enviar mensagens/arquivos e usar comandos; IDs do canal e do seu usuário.
 4. Chaves gratuitas: Google AI Studio (Gemini) e Groq. Chave da API da Anthropic (platform.claude.com) com créditos (mínimo ~US$ 5) para o fallback.
 5. Instagram Business/Creator ligado a uma página do Facebook + app em developers.facebook.com.
 6. App em developers.tiktok.com com a Content Posting API (Direct Post) e **pedido de auditoria enviado hoje**.
@@ -214,5 +214,5 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 
 ## 10. Cronograma
 - **Seg (hoje):** Tarefa 0 — testes de viabilidade (Create Clip numa live real, coletor Kick, SupoClip em ARM, Gemini avaliando vídeo); setup das contas.
-- **Ter:** discovery, chat_monitor, clipper, coletores, processor, evaluator, scheduler, monitor Telegram; ensaio real com GTA V BR; calibração da IA.
+- **Ter:** discovery, chat_monitor, clipper, coletores, processor, evaluator, scheduler, monitor Discord; ensaio real com GTA V BR; calibração da IA.
 - **Qua (até 00:00):** publisher, rodando local no PC 24h, ajuste dos limiares, publicação de teste no Instagram.
