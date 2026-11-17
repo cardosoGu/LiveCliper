@@ -7,32 +7,26 @@ from pathlib import Path
 
 import httpx
 
-from .chat_monitor import ChatMonitor
-from .clipper import Clipper, TokenBucket
-from .collectors import collect_kick, collect_twitch_public, collector_loop
-from .config import Settings, load_settings
-from .db import DB
-from .discovery import discovery_loop
-from .evaluator import Evaluator
-from .media import cleanup_media
-from .media_server import MediaServer
-from .monitor import LogTransport, Monitor
-from .pipeline import Pipeline
-from .publishers import build_publishers
-from .scheduler import Scheduler
-from .spike import SpikeDetector
-from .supervisor import supervise
-from .twitch_api import TwitchAPI
+from .ai.evaluator import Evaluator
+from .capture.kick.public_clips import collect_kick
+from .capture.loop import collector_loop
+from .capture.spike import SpikeDetector
+from .capture.twitch.api import TwitchAPI
+from .capture.twitch.chat import ChatMonitor
+from .capture.twitch.clipper import Clipper, TokenBucket
+from .capture.twitch.discovery import discovery_loop
+from .capture.twitch.public_clips import collect_twitch_public
+from .control.monitor import LogTransport, Monitor
+from .core.config import Settings, load_settings
+from .core.db import DB
+from .core.supervisor import supervise
+from .processing.cleanup import cleanup_loop
+from .processing.pipeline import Pipeline
+from .publishing.media_server import MediaServer
+from .publishing.platforms import build_publishers
+from .publishing.scheduler import Scheduler
 
 log = logging.getLogger("liveclips")
-
-
-async def cleanup_loop(media_dir: Path) -> None:
-    while True:
-        n = await asyncio.to_thread(cleanup_media, media_dir)
-        if n:
-            log.info("limpeza: %d pastas de mídia removidas", n)
-        await asyncio.sleep(3600)
 
 
 def check_settings(cfg: Settings) -> list[str]:
@@ -62,7 +56,7 @@ async def amain() -> None:
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
         bot = None
         if cfg.discord_bot_token and cfg.discord_channel_id:
-            from .discord_bot import DiscordBot
+            from .control.discord_bot import DiscordBot
 
             bot = DiscordBot(cfg.discord_bot_token, cfg.discord_channel_id,
                              cfg.discord_admin_user_id)

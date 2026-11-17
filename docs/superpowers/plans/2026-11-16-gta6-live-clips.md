@@ -20,35 +20,47 @@
 - HTTP escuta em `$PORT` (padrão 8080) com `GET /health`. URL pública, nesta ordem: `PUBLIC_BASE_URL` → `https://$RAILWAY_PUBLIC_DOMAIN` → hostname lido de `TUNNEL_METRICS_URL` (padrão `http://cloudflared:2000/quicktunnel`), relido antes de cada publicação. Refresh tokens rotativos persistem no kv e têm prioridade sobre o env.
 
 ## Estrutura de arquivos
+Um pacote por etapa do fluxo; dependências só "para frente" (capture → processing → ai → publishing), com `core` compartilhado e `main.py` como único ponto que liga tudo.
 ```
-pyproject.toml, Dockerfile, docker-compose.yml, .env.example
 src/liveclips/
-  config.py        Settings + load_settings(env)
-  timeutil.py      local_day, local_midnight_utc, parse_iso
-  models.py        State, Candidate
-  db.py            DB (candidates, publications, blocklist, kv)
-  spike.py         SpikeDetector, Spike, spike_score
-  ranking.py       compute_rank, find_overlap
-  intake.py        candidate_from_twitch_clip, admit
-  twitch_api.py    TwitchAPI, TwitchError
-  chat_monitor.py  parse_privmsg, ChannelInfo, ChatMonitor
-  discovery.py     discover_twitch, discovery_loop
-  clipper.py       TokenBucket, choose_spike, Clipper
-  collectors.py    collect_twitch_public, parse_kick_clips, collect_kick, collector_loop
-  media.py         run, download_clip, extract_audio, credit_text, build_filter, render_vertical, extract_frames, cleanup_media
-  transcribe.py    segments_to_srt, transcribe_groq, transcribe
-  evaluator.py     Verdict, parse_verdict, build_prompt, claude_cost_usd, Evaluator, AIUnavailable
-  pipeline.py      Pipeline
-  publishers/      __init__ (PublishJob, PostResult, PublishError, build_publishers), caption.py, instagram.py, tiktok.py, youtube.py
-  media_server.py  MediaServer
-  scheduler.py     daily_limit, can_post_now, pick_next, is_expired, Scheduler
-  monitor.py       Monitor (lógica de comandos/ações, independente de transporte)
-  discord_bot.py   DiscordBot (discord.py: canal, botões, slash commands)
-  supervisor.py    supervise
-  main.py          amain() — liga tudo
-scripts/ twitch_oauth.py, calibrate_ai.py
-docs/ run-local.md
-tests/ test_<módulo>.py, fixtures/kick_clips.json
+  main.py                  composição: cria e supervisiona todos os módulos
+  core/                    compartilhado
+    config.py              Settings + load_settings(env)
+    models.py              State, Candidate, is_expired
+    db.py                  DB (candidates, publications, blocklist, kv)
+    timeutil.py            utcnow, parse_iso, local_day, local_midnight_utc
+    credits.py             credit_text
+    supervisor.py          supervise
+  capture/                 etapa 1 — achar momentos
+    spike.py               SpikeDetector, Spike, spike_score
+    ranking.py             compute_rank, find_overlap
+    intake.py              candidate_from_twitch_clip, admit
+    loop.py                collector_loop
+    twitch/  api.py (TwitchAPI) · chat.py (ChatMonitor) · discovery.py · clipper.py · public_clips.py
+    kick/    public_clips.py (parse_kick_clips, collect_kick)
+  processing/              etapa 2 — mídia
+    download.py            download_clip (yt-dlp)
+    ffmpeg.py              run, extract_audio, build_filter, render_vertical, make_preview, extract_frames
+    transcribe.py          segments_to_srt, transcribe (Groq → local)
+    cleanup.py             cleanup_media, cleanup_loop
+    pipeline.py            Pipeline, MediaOps
+  ai/                      etapa 3 — decisão
+    verdict.py             Verdict, VERDICT_SCHEMA, parse_verdict
+    prompt.py              SYSTEM_PROMPT, build_prompt
+    gemini.py              gemini_evaluate
+    claude.py              claude_evaluate, claude_cost_usd
+    evaluator.py           Evaluator, AIUnavailable
+  publishing/              etapa 4 — publicação
+    policy.py              daily_limit, can_post_now, pick_next
+    scheduler.py           Scheduler
+    caption.py             build_caption
+    media_server.py        MediaServer (/media, /health)
+    platforms/  base.py · instagram.py · tiktok.py · youtube.py · __init__ (build_publishers)
+  control/                 painel
+    monitor.py             Monitor (comandos/ações), LogTransport
+    discord_bot.py         DiscordBot
+scripts/   twitch_oauth.py, calibrate_ai.py
+tests/     espelha src/ (core/, capture/, processing/, ai/, publishing/, control/) + factories.py, fixtures/
 ```
 
 ---

@@ -20,9 +20,9 @@ import csv
 import sys
 from pathlib import Path
 
-from liveclips.config import load_settings
-from liveclips.db import DB
-from liveclips.evaluator import Evaluator
+from liveclips.core.config import load_settings
+from liveclips.core.db import DB
+from liveclips.ai.evaluator import Evaluator
 
 
 async def main(folder: Path, labels: Path) -> None:
