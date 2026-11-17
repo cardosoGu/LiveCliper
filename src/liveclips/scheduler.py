@@ -1,0 +1,31 @@
+"""Política de publicação (funções puras) e o loop que publica."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+from .models import Candidate
+
+
+def daily_limit(day_index: int, start: int, step: int, cap: int) -> int:
+    return min(cap, start + step * max(0, day_index))
+
+
+def can_post_now(now: datetime, last_post_at: datetime | None, posts_today: int,
+                 limit: int, min_interval_min: int) -> bool:
+    if posts_today >= limit:
+        return False
+    if last_post_at is None:
+        return True
+    return now - last_post_at >= timedelta(minutes=min_interval_min)
+
+
+def pick_next(queue: list[Candidate], last_channel: str | None) -> Candidate | None:
+    ordered = sorted(queue, key=lambda c: (c.ai_score or 0.0, c.rank), reverse=True)
+    for c in ordered:
+        if last_channel is None or c.channel != last_channel:
+            return c
+    return None
+
+
+def is_expired(c: Candidate, now: datetime, ttl_min: int) -> bool:
+    return now - c.created_at > timedelta(minutes=ttl_min)
