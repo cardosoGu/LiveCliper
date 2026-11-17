@@ -117,11 +117,12 @@ class ManualTester:
 
         preview = None
         if c.vertical_path and Path(c.vertical_path).exists():
-            if c.ai_json:
+            # título da IA; sem IA (ex.: cota esgotada), usa o título do clipe na Twitch
+            hook = Verdict.model_validate_json(c.ai_json).title if c.ai_json else c.title
+            if hook:
                 try:
                     src = Path(c.vertical_path)
-                    c.vertical_path = str(await self.title_fn(
-                        src, src.with_name("final.mp4"), Verdict.model_validate_json(c.ai_json).title))
+                    c.vertical_path = str(await self.title_fn(src, src.with_name("final.mp4"), hook))
                 except Exception as e:
                     log.warning("título-gancho do teste falhou: %s", e)
             preview = Path(c.vertical_path).with_name("preview.mp4")
