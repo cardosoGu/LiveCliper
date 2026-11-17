@@ -85,7 +85,8 @@ async def amain() -> None:
         publishers = build_publishers(cfg, db, http)
         media_server = MediaServer(cfg, http)
         monitor = Monitor(db, transport, {p.name: p for p in publishers}, cfg,
-                          channel_count=lambda: len(chat.channels))
+                          channel_count=lambda: len(chat.channels),
+                          chat_summary=chat.summary)
         if bot is not None:
             bot.attach(monitor)
         pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)

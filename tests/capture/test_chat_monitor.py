@@ -46,3 +46,22 @@ def test_set_channels_drops_gone_detectors():
     assert set(mon.detectors) == {"a"}
     assert mon.detectors["a"] is det_a  # mantém o histórico de quem continua
     assert mon.channels["a"].viewers == 10
+
+
+async def test_summary_counts_messages_and_spikes():
+    got = []
+
+    async def on_spike(info, spike):
+        got.append(info.login)
+
+    clock = [0.0]
+    mon = ChatMonitor(on_spike, FakeDetector, clock=lambda: clock[0])
+    mon.set_channels([ChannelInfo("gaules", "1", 5000), ChannelInfo("loud", "2", 900)])
+    for _ in range(30):
+        mon.handle_line(":a!a@a PRIVMSG #gaules :kkkk", 1.0)
+    for _ in range(6):
+        mon.handle_line(":a!a@a PRIVMSG #loud :oi", 1.0)
+    mon.detectors["gaules"].next = Spike(at=2.0, ratio=5, keyword_bonus=1, msgs=30)
+    await mon.check_spikes(60.0)
+    s = mon.summary(60.0)
+    assert "36 msgs/min" in s and "gaules 30/min" in s and "picos detectados desde o início: 1" in s

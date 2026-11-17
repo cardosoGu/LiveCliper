@@ -39,12 +39,14 @@ class LogTransport:
 class Monitor:
     def __init__(self, db: DB, transport: Transport, publishers_by_name: dict, cfg: Settings,
                  channel_count: Callable[[], int] = lambda: 0, now_fn=utcnow,
+                 chat_summary: Callable[[], str] = lambda: "",
                  clock: Callable[[], float] = time.monotonic):
         self.db = db
         self.transport = transport
         self.publishers = publishers_by_name
         self.cfg = cfg
         self.channel_count = channel_count
+        self.chat_summary = chat_summary
         self.now_fn = now_fn
         self.clock = clock
         self._last_alert: dict[str, float] = {}
@@ -126,6 +128,7 @@ class Monitor:
             f"**Status:** {'⏸️ pausado' if paused else '▶️ ativo'}"
             + (" · 🧪 modo ensaio" if self.cfg.dry_run else ""),
             f"Lives monitoradas: {self.channel_count()}",
+            *([s] if (s := self.chat_summary()) else []),
             f"Última hora: {last_hour}",
             f"Posts hoje: {self.db.publications_count_since(local_midnight_utc(now))}",
             f"Avaliações de IA hoje: {evals}/{self.cfg.ai_daily_budget}",

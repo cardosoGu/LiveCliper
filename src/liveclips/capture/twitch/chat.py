@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
 import random
 import time
@@ -45,6 +46,26 @@ class ChatMonitor:
         self.channels: dict[str, ChannelInfo] = {}
         self.detectors: dict[str, SpikeDetector] = {}
         self._joined: set[str] = set()
+        # estatísticas para log e /status (janela que reinicia a cada relatório)
+        self._msgs: collections.Counter[str] = collections.Counter()
+        self._stats_since = self.clock()
+        self.spikes_total = 0
+
+    def summary(self, now: float | None = None) -> str:
+        now = self.clock() if now is None else now
+        minutes = max((now - self._stats_since) / 60, 1 / 60)
+        total = sum(self._msgs.values())
+        top = ", ".join(f"{ch} {n / minutes:.0f}/min" for ch, n in self._msgs.most_common(3))
+        return (f"chat: {len(self._joined)}/{len(self.channels)} canais, "
+                f"{total / minutes:.0f} msgs/min no total"
+                + (f" (mais ativos: {top})" if top else "")
+                + f", picos detectados desde o início: {self.spikes_total}")
+
+    def _report(self, now: float, every_s: float = 300) -> None:
+        if now - self._stats_since >= every_s:
+            log.info(self.summary(now))
+            self._msgs.clear()
+            self._stats_since = now
 
     def set_channels(self, infos: list[ChannelInfo]) -> None:
         self.channels = {i.login.lower(): i for i in infos}
@@ -63,13 +84,18 @@ class ChatMonitor:
             det = self.detectors.get(channel)
             if det is not None:
                 det.add_message(now, text)
+                self._msgs[channel] += 1
         return None
 
     async def check_spikes(self, now: float) -> None:
         for login, det in list(self.detectors.items()):
             spike = det.poll(now)
             if spike is not None and login in self.channels:
+                self.spikes_total += 1
+                log.info("pico em %s: %d msgs em 10 s (%.1fx o normal)",
+                         login, spike.msgs, spike.ratio)
                 await self.on_spike(self.channels[login], spike)
+        self._report(now)
 
     async def run(self) -> None:
         while True:

@@ -42,7 +42,8 @@ class Clock:
 def make_monitor(db, pubs=None):
     t = FakeTransport()
     clock = Clock()
-    m = Monitor(db, t, pubs or {}, load_settings({}), channel_count=lambda: 42, clock=clock)
+    m = Monitor(db, t, pubs or {}, load_settings({}), channel_count=lambda: 42, clock=clock,
+                chat_summary=lambda: "chat: 200/200 canais, 120 msgs/min no total")
     return m, t, clock
 
 
@@ -51,6 +52,7 @@ def test_pause_resume_and_status(db):
     assert "pausadas" in m.handle_command("pause")
     assert db.kv_get("paused") == "1"
     assert "pausado" in m.handle_command("/status") and "42" in m.handle_command("status")
+    assert "120 msgs/min" in m.handle_command("status")
     m.handle_command("resume")
     assert db.kv_get("paused") == "0"
 
