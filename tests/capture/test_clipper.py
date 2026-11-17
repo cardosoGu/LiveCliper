@@ -120,3 +120,8 @@ async def test_waiting_for_clip_does_not_block_next_spike(db):
     assert api.create_calls == 2
     release.set()
     await clipper.drain()
+
+
+async def test_discover_skips_small_lives():
+    infos = await discover_twitch(FakeAPI(), "g", 10, blocked=set(), min_viewers=300)
+    assert [i.login for i in infos] == ["blocked", "big"]

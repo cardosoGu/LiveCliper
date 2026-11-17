@@ -9,13 +9,16 @@ from .api import TwitchAPI
 
 
 async def collect_twitch_public(api: TwitchAPI, game_id: str, db: DB,
-                                viewers_cache: dict[str, int], now: datetime) -> int:
+                                viewers_cache: dict[str, int], now: datetime,
+                                min_viewers: int = 0) -> int:
     clips = await api.get_clips(game_id, now - timedelta(minutes=20), now)
     added = 0
     for clip in clips:
         if (clip.get("language") or "").lower() not in ("pt", "pt-br"):
             continue
         login = clip["broadcaster_name"].lower()
+        if min_viewers and viewers_cache.get(login, 0) < min_viewers:
+            continue  # live pequena (ou fora das monitoradas): não vale a cota da IA
         c = candidate_from_twitch_clip(clip, "twitch_public", viewers_cache.get(login, 100))
         if admit(db, c, now):
             added += 1

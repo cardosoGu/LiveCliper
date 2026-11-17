@@ -47,6 +47,7 @@ class Settings:
     yt_refresh_token: str
     # ajustes
     monitor_max_channels: int
+    min_viewers: int
     spike_multiplier: float
     spike_min_msgs: int
     clip_rate_seconds: float
@@ -117,6 +118,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         yt_client_secret=s("YT_CLIENT_SECRET"),
         yt_refresh_token=s("YT_REFRESH_TOKEN"),
         monitor_max_channels=i("MONITOR_MAX_CHANNELS", 200),
+        min_viewers=i("MIN_VIEWERS", 300),
         spike_multiplier=f("SPIKE_MULTIPLIER", 3.0),
         spike_min_msgs=i("SPIKE_MIN_MSGS", 6),
         clip_rate_seconds=f("CLIP_RATE_SECONDS", 20.0),

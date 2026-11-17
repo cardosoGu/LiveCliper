@@ -100,10 +100,12 @@ async def amain() -> None:
         jobs = {
             "chat": chat.run,
             "discovery": lambda: discovery_loop(twitch, game_id, chat, db,
-                                                cfg.monitor_max_channels, viewers_cache),
+                                                cfg.monitor_max_channels, viewers_cache,
+                                                min_viewers=cfg.min_viewers),
             "clipper": clipper.run,
             "twitch_clips": lambda: collector_loop(
-                lambda now: collect_twitch_public(twitch, game_id, db, viewers_cache, now),
+                lambda now: collect_twitch_public(twitch, game_id, db, viewers_cache, now,
+                                                cfg.min_viewers),
                 180, "twitch_clips"),
             "pipeline": pipeline.run,
             "scheduler": scheduler.run,
