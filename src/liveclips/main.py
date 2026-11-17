@@ -16,6 +16,7 @@ from .capture.twitch.chat import ChatMonitor
 from .capture.twitch.clipper import Clipper, TokenBucket
 from .capture.twitch.discovery import discovery_loop
 from .capture.twitch.public_clips import collect_twitch_public
+from .control.manual_test import ManualTester
 from .control.monitor import LogTransport, Monitor
 from .core.config import Settings, load_settings
 from .core.db import DB
@@ -90,6 +91,7 @@ async def amain() -> None:
         if bot is not None:
             bot.attach(monitor)
         pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)
+        monitor.tester = ManualTester(twitch, db, pipeline, chat)
         scheduler = Scheduler(db, cfg, publishers, media_server, monitor)
 
         await media_server.start()

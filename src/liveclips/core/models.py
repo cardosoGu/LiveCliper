@@ -18,6 +18,7 @@ class State(StrEnum):
     EXPIRED = "expired"
     DELETED = "deleted"
     FAILED = "failed"
+    TESTED = "tested"  # criado pelo /testar: nunca entra na fila de publicação
 
 
 @dataclass

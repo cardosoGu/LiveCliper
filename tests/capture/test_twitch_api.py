@@ -62,3 +62,17 @@ async def test_error_status_is_raised():
         with pytest.raises(TwitchError) as exc:
             await api.create_clip("123")
     assert exc.value.status == 403
+
+
+@respx.mock
+async def test_get_user():
+    respx.post(OAUTH).mock(side_effect=token_handler)
+    route = respx.get(f"{HELIX}/users").mock(side_effect=[
+        httpx.Response(200, json={"data": [{"id": "9", "login": "gaules"}]}),
+        httpx.Response(200, json={"data": []}),
+    ])
+    async with httpx.AsyncClient() as http:
+        api = TwitchAPI("cid", "sec", "rt", http)
+        assert (await api.get_user("Gaules"))["id"] == "9"
+        assert await api.get_user("ninguem") is None
+    assert route.calls[0].request.url.params["login"] == "gaules"

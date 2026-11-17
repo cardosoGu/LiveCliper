@@ -116,6 +116,11 @@ class TwitchAPI:
                                 params={"broadcaster_id": broadcaster_id})
         return j["data"][0]["id"]
 
+    async def get_user(self, login: str) -> dict | None:
+        j = await self._request("GET", "/users", params={"login": login.lower()})
+        data = j.get("data", [])
+        return data[0] if data else None
+
     async def get_clip(self, clip_id: str) -> dict | None:
         j = await self._request("GET", "/clips", params={"id": clip_id})
         data = j.get("data", [])

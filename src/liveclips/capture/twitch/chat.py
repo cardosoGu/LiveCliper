@@ -61,6 +61,10 @@ class ChatMonitor:
                 + (f" (mais ativos: {top})" if top else "")
                 + f", picos detectados desde o início: {self.spikes_total}")
 
+    def most_active(self) -> list[str]:
+        """Canais monitorados ordenados por mensagens na janela atual de estatísticas."""
+        return [ch for ch, _ in self._msgs.most_common() if ch in self.channels]
+
     def _report(self, now: float, every_s: float = 300) -> None:
         if now - self._stats_since >= every_s:
             log.info(self.summary(now))

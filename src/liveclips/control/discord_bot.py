@@ -94,6 +94,18 @@ class DiscordBot:
         async def status(interaction: discord.Interaction):
             await reply(interaction, "status")
 
+        @self.tree.command(name="testar",
+                           description="Força um clipe agora e mostra a prévia com a nota da IA "
+                                       "(não publica)")
+        @app_commands.describe(canal="login de um canal (opcional; padrão: a live mais ativa)")
+        async def testar(interaction: discord.Interaction, canal: str | None = None):
+            if interaction.user.id != bot.admin_user_id:
+                await interaction.response.send_message("Sem permissão.", ephemeral=True)
+                return
+            await interaction.response.defer(thinking=True)
+            result = await bot.monitor.run_test(canal)
+            await interaction.followup.send(result[:2000])
+
         @self.tree.command(name="block", description="Bloqueia um canal")
         @app_commands.describe(canal="login do canal na Twitch/Kick")
         async def block(interaction: discord.Interaction, canal: str):

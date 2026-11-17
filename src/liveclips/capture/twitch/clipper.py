@@ -40,6 +40,23 @@ class PendingSpike:
     received: float
 
 
+async def wait_for_clip(api: TwitchAPI, clip_id: str,
+                        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                        attempts: int = 15, interval_s: float = 2) -> dict | None:
+    """A Twitch leva alguns segundos para processar um clipe recém-criado."""
+    for _ in range(attempts):
+        await sleep(interval_s)
+        try:
+            clip = await api.get_clip(clip_id)
+        except TwitchError as e:
+            log.warning("get_clip %s: %s", clip_id, e)
+            continue
+        if clip:
+            return clip
+    log.warning("clipe %s não ficou disponível", clip_id)
+    return None
+
+
 def choose_spike(pending: list[PendingSpike], now: float,
                  max_age: float = 15.0) -> tuple[PendingSpike | None, list[PendingSpike]]:
     """O Create Clip pega os ~30 s anteriores; pico com mais de `max_age` s já passou."""
@@ -108,17 +125,8 @@ class Clipper:
         return None
 
     async def _await_clip(self, clip_id: str, p: PendingSpike) -> None:
-        clip = None
-        for _ in range(15):
-            await self.sleep(2)
-            try:
-                clip = await self.api.get_clip(clip_id)
-            except TwitchError as e:
-                log.warning("get_clip %s: %s", clip_id, e)
-            if clip:
-                break
+        clip = await wait_for_clip(self.api, clip_id, self.sleep)
         if not clip:
-            log.warning("clipe %s não ficou disponível", clip_id)
             return
         c = candidate_from_twitch_clip(clip, "chat_spike", p.info.viewers, p.score)
         if admit(self.db, c):

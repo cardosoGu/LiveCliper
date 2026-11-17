@@ -16,8 +16,8 @@ from ..core.timeutil import local_day, local_midnight_utc, utcnow
 
 log = logging.getLogger(__name__)
 
-HELP = ("Comandos: /pause · /resume · /status · /block canal · /unblock canal · "
-        "/min_score N")
+HELP = ("Comandos: /pause · /resume · /status · /testar [canal] · /block canal · "
+        "/unblock canal · /min_score N")
 OUTBOX_MAX = 200
 
 
@@ -47,6 +47,7 @@ class Monitor:
         self.cfg = cfg
         self.channel_count = channel_count
         self.chat_summary = chat_summary
+        self.tester = None  # ManualTester, ligado no main depois que o pipeline existe
         self.now_fn = now_fn
         self.clock = clock
         self._last_alert: dict[str, float] = {}
@@ -75,6 +76,20 @@ class Monitor:
                 await self.transport.send(text, buttons)
         except Exception as e:
             log.warning("falha ao enviar aviso: %s", e)
+
+    async def run_test(self, channel: str | None = None) -> str:
+        """/testar: o resultado vem como texto; a prévia em vídeo segue pela fila."""
+        if self.tester is None:
+            return "Teste indisponível (Twitch não configurada)."
+        try:
+            result = await self.tester.run(channel)
+        except Exception as e:
+            log.exception("teste manual falhou")
+            return f"🧪 O teste falhou: {type(e).__name__}: {e}"[:1900]
+        if result.preview_path is not None:
+            self._enqueue(("file", str(result.preview_path), result.text))
+            return "🧪 Teste concluído. A prévia com a nota da IA vem na próxima mensagem."
+        return result.text
 
     async def run_sender(self) -> None:
         while True:
