@@ -62,7 +62,7 @@ Detectar automaticamente os melhores momentos das lives **brasileiras** de GTA 6
 Um único app Python 3.12 (asyncio) com módulos isolados, cada um com uma responsabilidade, comunicando pelo banco SQLite (tabela `candidates` com estados). Um módulo falhar não derruba os outros.
 
 ### Estados de um candidato
-`detected → downloaded → processed → evaluated → queued → published`
+`detected → processing (download, legenda, render, IA) → queued → published`
 Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além do prazo), `deleted` (removido via Telegram), `failed` (com motivo).
 
 ## 4. Componentes
@@ -105,7 +105,7 @@ Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além
 - Baixa o MP4 do clipe com `yt-dlp` (Twitch e Kick).
 - Formata para 9:16 (1080×1920):
   - **Layout padrão:** gameplay centralizado sobre fundo desfocado do próprio vídeo, legenda queimada na parte de baixo e o crédito `twitch.tv/<canal>` no topo.
-  - **Opção SupoClip:** se a Tarefa 0 aprovar o SupoClip (API funcional, roda em ARM, bom enquadramento em GTA), o processor delega a ele via REST API; caso contrário usa o pipeline próprio com FFmpeg acima.
+  - **SupoClip:** fora da v1 por causa do prazo (risco de não rodar em ARM e API não verificada). Avaliar depois do lançamento como substituto do render.
 - Legendas: Groq Whisper (`whisper-large-v3`, idioma fixo `pt`) → SRT → FFmpeg. Se a cota acabar: Whisper local (`faster-whisper small`, CPU ARM). Se a transcrição falhar: segue sem legenda.
 
 ### 4.8 evaluator (IA)
@@ -120,6 +120,7 @@ Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além
   - `safe=false` → `rejected_ai`. Inclui: conteúdo sexual, ódio, ofensa a terceiros, dados pessoais, menor de idade, violência real (não do jogo), streamer fora do jogo em situação constrangedora e **spoiler de história** (cutscenes, missões da campanha, final). A preferência é por caos de gameplay, reação do streamer, física e momentos engraçados.
   - `score < AI_MIN_SCORE` (padrão **7**) → `rejected_ai`.
   - O prompt pede explicitamente: "este clipe prende um espectador brasileiro nos primeiros 2 segundos?". O gancho conta mais na nota.
+  - Se a fala principal não for português do Brasil → `score = 0`. Isso também filtra os clipes do Kick, cuja API não informa o idioma.
 - **Fallback: Claude (API da Anthropic).** Se o Gemini falhar ou a cota acabar, o evaluator usa o Claude com o mesmo prompt e o mesmo JSON de saída:
   - Modelo: `claude-opus-5-5` (configurável em `CLAUDE_MODEL`; `claude-haiku-5-5` custa ~40× menos).
   - O Claude não aceita vídeo: o evaluator extrai **8 frames** do clipe com FFmpeg (1 a cada ~4 s, 720p) e envia as imagens + a transcrição + os metadados.
@@ -140,7 +141,8 @@ Saídas laterais: `rejected_rank`, `rejected_ai`, `expired` (ficou na fila além
 - Bot em modo polling, respondendo só ao `TELEGRAM_ADMIN_CHAT_ID`.
 - Avisa cada post publicado (link, nota, canal) com botões **🗑️ Apagar post** e **🚫 Bloquear canal**.
 - Comandos: `/pause` e `/resume` (para e retoma todas as publicações), `/status`, `/block canal`, `/unblock canal`, `/min_score N`.
-- Alertas: falha de token, cota esgotada, erro repetido de plataforma, comentário de denúncia ou remoção detectada.
+- Alertas: qualquer módulo que caia (falha de token, erro repetido de plataforma etc.), com no máximo 1 alerta igual a cada 10 min.
+- **Modo ensaio (`DRY_RUN=1`):** nada é publicado; o scheduler segue as mesmas regras, mas manda o vídeo final + legenda para o Telegram. Usado no ensaio com GTA V e na calibração.
 
 ### 4.11 publisher
 Publica em cada plataforma habilitada de forma independente (uma falhar não impede as outras).
