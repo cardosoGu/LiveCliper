@@ -78,7 +78,8 @@ async def amain() -> None:
         log.info("categoria '%s' = %s", cfg.twitch_game_name, game_id)
 
         viewers_cache: dict[str, int] = {}
-        clipper = Clipper(twitch, db, TokenBucket(cfg.clip_rate_seconds))
+        clipper = Clipper(twitch, db, TokenBucket(cfg.clip_rate_seconds),
+                          followup_delay_s=cfg.clip_followup_s)
         chat = ChatMonitor(
             on_spike=clipper.on_spike,
             detector_factory=lambda: SpikeDetector(multiplier=cfg.spike_multiplier,
@@ -91,7 +92,8 @@ async def amain() -> None:
         if bot is not None:
             bot.attach(monitor)
         pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)
-        monitor.tester = ManualTester(twitch, db, pipeline, chat)
+        monitor.tester = ManualTester(twitch, db, pipeline, chat,
+                                      followup_delay_s=cfg.clip_followup_s)
         scheduler = Scheduler(db, cfg, publishers, media_server, monitor)
 
         await media_server.start()

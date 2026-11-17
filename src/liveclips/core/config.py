@@ -50,6 +50,7 @@ class Settings:
     spike_multiplier: float
     spike_min_msgs: int
     clip_rate_seconds: float
+    clip_followup_s: float
     rank_threshold: float
     ai_daily_budget: int
     ai_min_score: float
@@ -119,6 +120,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         spike_multiplier=f("SPIKE_MULTIPLIER", 3.0),
         spike_min_msgs=i("SPIKE_MIN_MSGS", 6),
         clip_rate_seconds=f("CLIP_RATE_SECONDS", 20.0),
+        clip_followup_s=f("CLIP_FOLLOWUP_S", 30.0),
         rank_threshold=f("RANK_THRESHOLD", 5.0),
         ai_daily_budget=i("AI_DAILY_BUDGET", 300),
         ai_min_score=f("AI_MIN_SCORE", 8.0),

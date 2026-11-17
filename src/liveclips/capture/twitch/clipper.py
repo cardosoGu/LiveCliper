@@ -57,6 +57,21 @@ async def wait_for_clip(api: TwitchAPI, clip_id: str,
     return None
 
 
+async def follow_up_clip(api: TwitchAPI, broadcaster_id: str, delay_s: float,
+                         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> str | None:
+    """Clipe de continuação: os ~30 s seguintes ao primeiro, para mostrar o desfecho."""
+    if delay_s <= 0:
+        return None
+    await sleep(delay_s)
+    try:
+        clip_id = await api.create_clip(broadcaster_id)
+    except TwitchError as e:
+        log.warning("clipe de continuação falhou: %s", e)
+        return None
+    clip = await wait_for_clip(api, clip_id, sleep)
+    return clip["url"] if clip else None
+
+
 def choose_spike(pending: list[PendingSpike], now: float,
                  max_age: float = 15.0) -> tuple[PendingSpike | None, list[PendingSpike]]:
     """O Create Clip pega os ~30 s anteriores; pico com mais de `max_age` s já passou."""
@@ -70,8 +85,10 @@ def choose_spike(pending: list[PendingSpike], now: float,
 class Clipper:
     def __init__(self, api: TwitchAPI, db: DB, bucket: TokenBucket,
                  clock: Callable[[], float] = time.monotonic,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 followup_delay_s: float = 0):
         self.api = api
+        self.followup_delay_s = followup_delay_s
         self.db = db
         self.bucket = bucket
         self.clock = clock
@@ -129,6 +146,8 @@ class Clipper:
         if not clip:
             return
         c = candidate_from_twitch_clip(clip, "chat_spike", p.info.viewers, p.score)
+        c.extra_clip_url = await follow_up_clip(self.api, p.info.broadcaster_id,
+                                                self.followup_delay_s, self.sleep)
         if admit(self.db, c):
             log.info("clipe criado: %s (%s, score %.1f)", c.clip_id, c.channel, p.score)
 

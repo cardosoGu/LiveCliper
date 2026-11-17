@@ -17,7 +17,7 @@ from ..ai.verdict import Verdict
 from ..capture.intake import candidate_from_twitch_clip
 from ..capture.twitch.api import TwitchAPI, TwitchError
 from ..capture.twitch.chat import ChannelInfo, ChatMonitor
-from ..capture.twitch.clipper import wait_for_clip
+from ..capture.twitch.clipper import follow_up_clip, wait_for_clip
 from ..core.credits import credit_text
 from ..core.db import DB
 from ..core.models import State
@@ -44,8 +44,10 @@ class TestResult:
 class ManualTester:
     def __init__(self, api: TwitchAPI, db: DB, pipeline: Pipeline, chat: ChatMonitor,
                  preview_fn: Callable[[Path, Path], Awaitable[Path]] = make_preview,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+                 followup_delay_s: float = 0):
         self.api = api
+        self.followup_delay_s = followup_delay_s
         self.db = db
         self.pipeline = pipeline
         self.chat = chat
@@ -92,6 +94,8 @@ class ManualTester:
                               "liberou em 30 s. Tente de novo.")
 
         c = candidate_from_twitch_clip(clip, "manual_test", info.viewers)
+        c.extra_clip_url = await follow_up_clip(self.api, info.broadcaster_id,
+                                                self.followup_delay_s, self.sleep)
         c.state = State.PROCESSING
         self.db.insert_candidate(c)
         await self.pipeline.process(c)

@@ -39,6 +39,7 @@ class Candidate:
     id: int | None = None
     raw_path: str | None = None
     vertical_path: str | None = None
+    extra_clip_url: str | None = None  # continuação do lance (~30 s depois)
     transcript: str | None = None
     ai_score: float | None = None
     ai_json: str | None = None

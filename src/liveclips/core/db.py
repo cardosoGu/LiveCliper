@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS candidates (
   duration REAL NOT NULL, title TEXT NOT NULL, viewers INTEGER NOT NULL,
   view_count INTEGER NOT NULL, spike_score REAL NOT NULL, rank REAL NOT NULL,
   state TEXT NOT NULL, raw_path TEXT, vertical_path TEXT, transcript TEXT,
-  ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL
+  ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL,
+  extra_clip_url TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cand_state ON candidates(state);
 CREATE INDEX IF NOT EXISTS idx_cand_channel ON candidates(channel, created_at);
@@ -35,7 +36,7 @@ _COLS = [
     "platform", "source", "clip_id", "clip_url", "channel", "created_at",
     "duration", "title", "viewers", "view_count", "spike_score", "rank",
     "state", "raw_path", "vertical_path", "transcript", "ai_score", "ai_json",
-    "reason", "updated_at",
+    "reason", "updated_at", "extra_clip_url",
 ]
 
 
@@ -66,6 +67,13 @@ class DB:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(candidates)")}
+        if "extra_clip_url" not in cols:  # bancos criados antes dos clipes de 60 s
+            self.conn.execute("ALTER TABLE candidates ADD COLUMN extra_clip_url TEXT")
+            self.conn.commit()
 
     # --- candidatos -------------------------------------------------------
     def insert_candidate(self, c: Candidate) -> int | None:

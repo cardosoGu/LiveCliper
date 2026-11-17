@@ -14,6 +14,7 @@ Escala obrigatória:
 - 5-6: ok, mas fraco. Tem algo interessante, mas demora, depende de contexto ou não tem desfecho.
 - 0-4: chato. Conversa/diálogo de RP sem ação visual, gente parada falando, tela estática, menu, loading, mapa, piada interna que precisa de contexto, nada acontece nos primeiros 3 segundos.
 Regras duras:
+- O vídeo pode ter até ~60 s (o lance e a continuação logo depois). Avalie o vídeo INTEIRO: se a segunda metade for parada ou não acrescentar desfecho/reação, isso derruba a nota.
 - Diálogo ou roleplay de conversa sem ação visual relevante: no máximo 4, mesmo que a fala seja engraçada.
 - Se nada chama atenção nos primeiros 3 segundos: no máximo 5.
 - Sem desfecho (o clipe corta antes do momento acontecer): no máximo 5.

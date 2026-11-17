@@ -17,7 +17,7 @@ from ..core.models import Candidate, State, is_expired
 from ..core.timeutil import local_day, utcnow
 from . import transcribe as tr
 from .download import download_clip
-from .ffmpeg import extract_audio, probe_dimensions, render_vertical
+from .ffmpeg import concat_clips, extract_audio, probe_dimensions, render_vertical
 from .subtitles import build_cues, cues_to_ass, words_from_segments
 
 log = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ class MediaOps:
     transcribe: Callable[..., Awaitable[tr.Transcript]] = tr.transcribe
     render: Callable[..., Awaitable[Path]] = render_vertical
     probe: Callable[[Path], Awaitable[tuple[int, int]]] = probe_dimensions
+    concat: Callable[[list[Path], Path], Awaitable[Path]] = concat_clips
 
 
 @dataclass
@@ -109,6 +110,12 @@ class Pipeline:
         por idioma (economiza render e orçamento de IA)."""
         work.mkdir(parents=True, exist_ok=True)
         raw = await self.ops.download(c.clip_url, work / "raw.mp4")
+        if c.extra_clip_url:  # continuação do lance: vídeo de ~60 s
+            try:
+                extra = await self.ops.download(c.extra_clip_url, work / "raw2.mp4")
+                raw = await self.ops.concat([raw, extra], work / "combined.mp4")
+            except Exception as e:
+                log.warning("continuação de %s ignorada: %s", c.clip_id, e)
         c.raw_path = str(raw)
         audio = await self.ops.extract_audio(raw, work / "audio.mp3")
         transcript = await self.ops.transcribe(audio, self.cfg.groq_api_key, self.http)
