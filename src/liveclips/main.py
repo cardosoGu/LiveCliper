@@ -43,6 +43,10 @@ async def amain() -> None:
     cfg = load_settings()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # httpx registra a URL completa de cada requisição em INFO; algumas APIs
+    # (Instagram) recebem o token na URL, então esse log vazaria credenciais.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     missing = check_settings(cfg)
     if missing:
         raise SystemExit("Variáveis obrigatórias faltando: " + ", ".join(missing))

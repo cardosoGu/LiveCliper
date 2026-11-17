@@ -34,7 +34,8 @@ class TwitchAPI:
 
     async def _app_auth(self) -> str:
         if self._app_token is None:
-            r = await self.http.post(OAUTH, params={
+            # no corpo, nunca na URL: URLs acabam em logs
+            r = await self.http.post(OAUTH, data={
                 "client_id": self.client_id, "client_secret": self.client_secret,
                 "grant_type": "client_credentials",
             })
