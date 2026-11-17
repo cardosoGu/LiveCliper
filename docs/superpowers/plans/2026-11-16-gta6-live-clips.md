@@ -4,7 +4,7 @@
 
 **Objetivo:** app Python que detecta momentos fortes nas lives BR de GTA 6 (Twitch/Kick), gera Reels verticais legendados, avalia com IA (Gemini → fallback Claude) e publica sozinho no Instagram (TikTok/YouTube quando auditados).
 
-**Arquitetura:** um processo asyncio com módulos isolados supervisionados; estado em SQLite; uma imagem Docker configurada só por env, hospedada no Railway (volume `/data`) e também executável localmente com Docker Compose + Cloudflare Tunnel. Spec: `docs/superpowers/specs/2026-11-16-gta6-live-clips-design.md`.
+**Arquitetura:** um processo asyncio com módulos isolados supervisionados; estado em SQLite; uma imagem Docker configurada só por env. **Fase 1 (este plano): roda no PC** com Docker Compose + Cloudflare quick tunnel. Fase 2 (fora deste plano): Railway, com o mesmo container. Spec: `docs/superpowers/specs/2026-11-16-gta6-live-clips-design.md`.
 
 **Stack:** Python 3.12, httpx, aiohttp (servidor de mídia), pydantic, anthropic, google-genai, google-api-python-client, faster-whisper, yt-dlp, FFmpeg, SQLite, pytest + pytest-asyncio + respx.
 
@@ -17,11 +17,11 @@
 - Aquecimento: 45 min entre posts; 8 posts no dia 1, +2/dia até 20; fila expira em 90 min.
 - `DRY_RUN=1`: nunca chama publishers; envia prévia ao Telegram.
 - Todos os parâmetros vêm de env (`.env.example` documenta cada um). Nada de caminho, domínio ou credencial no código.
-- HTTP escuta em `$PORT` (padrão 8080). `PUBLIC_BASE_URL` vazio → `https://$RAILWAY_PUBLIC_DOMAIN`. Refresh tokens rotativos persistem no kv e têm prioridade sobre o env.
+- HTTP escuta em `$PORT` (padrão 8080) com `GET /health`. URL pública, nesta ordem: `PUBLIC_BASE_URL` → `https://$RAILWAY_PUBLIC_DOMAIN` → hostname lido de `TUNNEL_METRICS_URL` (padrão `http://cloudflared:2000/quicktunnel`), relido antes de cada publicação. Refresh tokens rotativos persistem no kv e têm prioridade sobre o env.
 
 ## Estrutura de arquivos
 ```
-pyproject.toml, Dockerfile, docker-compose.yml, railway.toml, .env.example
+pyproject.toml, Dockerfile, docker-compose.yml, .env.example
 src/liveclips/
   config.py        Settings + load_settings(env)
   timeutil.py      local_day, local_midnight_utc, parse_iso
@@ -46,14 +46,15 @@ src/liveclips/
   supervisor.py    supervise
   main.py          amain() — liga tudo
 scripts/ twitch_oauth.py, calibrate_ai.py
-docs/ deploy.md  (Railway + local)
+docs/ run-local.md
 tests/ test_<módulo>.py, fixtures/kick_clips.json
 ```
 
 ---
 
 ### Tarefa 0: Viabilidade e contas (manual, paralelo às tarefas 1–4)
-- [ ] Conta Railway (plano Hobby) conectada ao GitHub; repositório GitHub privado para o projeto (o push acontece na Tarefa 16).
+- [ ] Docker Desktop instalado e rodando no Windows; suspensão automática do PC desativada para a noite do lançamento.
+- [ ] Ligar este repositório local ao repositório GitHub existente (`git remote add origin <url>`).
 - [ ] App Twitch (redirect `http://localhost:3000`) + conta bot dedicada.
 - [ ] `curl -A "Mozilla/5.0" "https://kick.com/api/v2/categories/grand-theft-auto-vi/clips?sort=date&time=day"`: salvar a resposta real em `tests/fixtures/kick_clips.json`. Se retornar 403/HTML (anti-bot), manter `KICK_ENABLED=0` na v1.
 - [ ] Gemini: no AI Studio, subir um clipe vertical de 30 s e confirmar que o modelo descreve o vídeo.
@@ -63,7 +64,7 @@ tests/ test_<módulo>.py, fixtures/kick_clips.json
 
 ### Tarefa 1: Scaffold, config, modelos, banco
 **Arquivos:** pyproject.toml, .env.example, config.py, timeutil.py, models.py, db.py, tests/conftest.py, tests/test_db.py, tests/test_config.py
-**Produz:** `load_settings(env: Mapping|None) -> Settings` (todos os campos com padrão; segredos `""`; `port` de `PORT`; `public_base_url` com fallback para `https://$RAILWAY_PUBLIC_DOMAIN`); `State` (detected, processing, queued, published, rejected_rank, rejected_ai, expired, deleted, failed); `Candidate` dataclass; `DB(path)` com `insert_candidate(c)->int|None` (None se `clip_id` duplicado), `get`, `update`, `by_state(state, limit)` (ordem rank desc), `channel_candidates_since`, `reset_processing`, `record_publication`, `publications_for`, `publications_count_since`, `last_publication()->(datetime, channel)|None`, `block/unblock/is_blocked/blocked_channels`, `kv_get/kv_set/kv_incr_float`, `counts_since`.
+**Produz:** `load_settings(env: Mapping|None) -> Settings` (todos os campos com padrão; segredos `""`; `port` de `PORT`; `public_base_url`, `railway_public_domain` e `tunnel_metrics_url` lidos crus, resolvidos pelo MediaServer); `State` (detected, processing, queued, published, rejected_rank, rejected_ai, expired, deleted, failed); `Candidate` dataclass; `DB(path)` com `insert_candidate(c)->int|None` (None se `clip_id` duplicado), `get`, `update`, `by_state(state, limit)` (ordem rank desc), `channel_candidates_since`, `reset_processing`, `record_publication`, `publications_for`, `publications_count_since`, `last_publication()->(datetime, channel)|None`, `block/unblock/is_blocked/blocked_channels`, `kv_get/kv_set/kv_incr_float`, `counts_since`.
 **Testes:** settings padrão e override por env; insert/get ida e volta preserva datas e estado; duplicado retorna None; by_state ordena por rank; last_publication devolve o canal; kv_incr_float acumula; reset_processing volta processing→detected.
 
 ### Tarefa 2: Detector de pico (puro)
@@ -124,8 +125,8 @@ tests/ test_<módulo>.py, fixtures/kick_clips.json
 
 ### Tarefa 13: Publishers + servidor de mídia
 **Arquivos:** publishers/{__init__,caption,instagram,tiktok,youtube}.py, media_server.py, tests/test_publishers.py
-**Produz:** `PublishJob(video_path, video_url, caption, title)`; `PostResult(platform, post_id, url)`; `PublishError`; `build_caption(verdict, platform, channel)` (título, legenda, `🎥 Créditos: …`, hashtags; máx. 2200); `InstagramPublisher(ig_user_id, token, http, version="v23.0").publish/delete` (container REELS → espera FINISHED → media_publish → permalink); `TikTokPublisher(key, secret, refresh, privacy, http, on_refresh)` (FILE_UPLOAD em 1 chunk → status fetch); `YouTubePublisher(client_id, secret, refresh, privacy).publish/delete`; `build_publishers(cfg, db, http)` (TikTok/YouTube só se o modo ≠ off); `MediaServer(public_base_url, port).expose(path, ttl_s=3600)->url` + `start()`, com rota `GET /health` → 200 "ok".
-**Testes (respx):** legenda tem créditos e é truncada; fluxo feliz do Instagram e container com ERROR; TikTok init/upload/status e a privacidade enviada; build_publishers respeita os modos; MediaServer serve o token válido e dá 404 para expirado (aiohttp test client).
+**Produz:** `PublishJob(video_path, video_url, caption, title)`; `PostResult(platform, post_id, url)`; `PublishError`; `build_caption(verdict, platform, channel)` (título, legenda, `🎥 Créditos: …`, hashtags; máx. 2200); `InstagramPublisher(ig_user_id, token, http, version="v23.0").publish/delete` (container REELS → espera FINISHED → media_publish → permalink); `TikTokPublisher(key, secret, refresh, privacy, http, on_refresh)` (FILE_UPLOAD em 1 chunk → status fetch); `YouTubePublisher(client_id, secret, refresh, privacy).publish/delete`; `build_publishers(cfg, db, http)` (TikTok/YouTube só se o modo ≠ off); `MediaServer(cfg, http, port)` com `async public_base() -> str` (ordem de resolução das restrições globais; levanta `PublishError` se nenhuma estiver disponível), `async expose(path, ttl_s=3600) -> url`, `start()`, e as rotas `GET /media/{token}.mp4` e `GET /health` → 200 "ok".
+**Testes (respx):** legenda tem créditos e é truncada; fluxo feliz do Instagram e container com ERROR; TikTok init/upload/status e a privacidade enviada; build_publishers respeita os modos; MediaServer serve o token válido e dá 404 para expirado (aiohttp test client); `public_base` usa o env fixo, depois `RAILWAY_PUBLIC_DOMAIN`, depois `{"hostname": "x.trycloudflare.com"}` do endpoint de métricas (respx).
 
 ### Tarefa 14: Scheduler (loop de publicação)
 **Arquivos:** scheduler.py (classe), tests/test_scheduler.py
@@ -137,17 +138,17 @@ tests/ test_<módulo>.py, fixtures/kick_clips.json
 **Produz:** `Telegram(token, chat_id, http)` com `send(text, buttons)`, `send_video(path, caption)`, `updates(offset)`, `answer_callback`; `Monitor(db, tg, publishers_by_name, cfg, channel_count, now_fn, clock)` com `alert` (dedup de 10 min), `post_published`, `dry_run_preview`, `handle_command` (/pause /resume /status /block /unblock /min_score), `handle_callback` (`del:<id>` apaga via publisher ou pede apagar manualmente; `block:<canal>`), `run()` (ignora outros chats).
 **Testes:** cada comando altera o kv/blocklist e responde; /min_score inválido; del chama publisher.delete e marca deleted; plataforma sem delete → instrução manual; alert deduplica; chat estranho ignorado.
 
-### Tarefa 16: Supervisor, main, Docker e deploy (Railway + local)
-**Arquivos:** supervisor.py, main.py, Dockerfile, docker-compose.yml (serviço `app` + `cloudflared` no perfil `tunnel`), railway.toml (builder Dockerfile, healthcheck `/health`, restart on failure), docs/deploy.md, tests/test_supervisor.py, tests/test_config.py (casos PORT/RAILWAY_PUBLIC_DOMAIN)
+### Tarefa 16: Supervisor, main, Docker e execução local
+**Arquivos:** supervisor.py, main.py, Dockerfile, docker-compose.yml (serviço `app` com `env_file: .env`, volume `./data:/data`, `restart: unless-stopped`; serviço `cloudflared` com `cloudflare/cloudflared` rodando `tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://app:8080`), docs/run-local.md, tests/test_supervisor.py
 **Produz:** `supervise(name, factory, alert, sleep=asyncio.sleep, backoff_max=300)`; `amain()` liga: DB (reset_processing), TwitchAPI (refresh token persistido no kv), game_id, ChatMonitor→Clipper, discovery, coletores, Pipeline, Scheduler, MediaServer, Monitor, limpeza de mídia de hora em hora; mensagem de "iniciado" no Telegram.
 **Testes:** supervise reinicia após exceção, alerta e aumenta o backoff.
-**docs/deploy.md cobre:** Railway (criar serviço a partir do repo, adicionar volume em `/data`, gerar domínio público, colar as variáveis, ver logs); local (`docker compose up`, `docker compose --profile tunnel up` e colar a URL do túnel em `PUBLIC_BASE_URL`); como obter cada token (Twitch via `scripts/twitch_oauth.py`, token longo do Instagram, TikTok/YouTube quando auditados).
-**Validação:** local com `DRY_RUN=1` e `TWITCH_GAME_NAME="Grand Theft Auto V"` → mensagem de início no Telegram e `/status` com canais monitorados; depois o mesmo no Railway (healthcheck verde, volume persistindo após redeploy).
+**docs/run-local.md cobre:** copiar `.env.example` para `.env`; `docker compose up -d --build`; `docker compose logs -f app`; parar e atualizar; como obter cada token (Twitch via `scripts/twitch_oauth.py`, token longo do Instagram, TikTok/YouTube quando auditados); cuidados para a noite do lançamento (PC sem suspensão, cabo de rede).
+**Validação:** `DRY_RUN=1` + `TWITCH_GAME_NAME="Grand Theft Auto V"` → mensagem de início no Telegram, `/status` com canais monitorados, `curl https://<x>.trycloudflare.com/health` responde "ok"; reiniciar o compose preserva `./data`.
 
 ### Tarefa 17: Ensaio, calibração e lançamento (terça/quarta)
 **Arquivos:** scripts/calibrate_ai.py
 - [ ] `calibrate_ai.py <pasta> labels.csv` (arquivo, esperado publicar|rejeitar) roda o Evaluator e imprime a matriz de confusão e os falsos "publicar".
 - [ ] Juntar ~30 clipes de GTA V BR (incluindo spoiler, conteúdo impróprio, inglês e chatos) e calibrar o prompt e a nota até **zero falsos publicar**.
-- [ ] Deploy no Railway com DRY_RUN=1 + GTA V por 1–2 h: medir picos/h, sucesso do Create Clip, latência ponta a ponta e qualidade visual; ajustar SPIKE_*, RANK_THRESHOLD e CLIP_RATE_SECONDS.
+- [ ] Rodar local com DRY_RUN=1 + GTA V por 1–2 h: medir picos/h, sucesso do Create Clip, latência ponta a ponta e qualidade visual; ajustar SPIKE_*, RANK_THRESHOLD e CLIP_RATE_SECONDS.
 - [ ] Publicar 1 Reel de teste real (DRY_RUN=0) e apagar pelo Telegram.
 - [ ] Quarta 23:30: `TWITCH_GAME_NAME="Grand Theft Auto VI"`, DRY_RUN=0, `/status`.

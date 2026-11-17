@@ -2,7 +2,7 @@
 
 **Data:** 2026-11-16
 **Prazo:** rodando antes do lançamento do GTA 6 (quarta-feira, 00:00)
-**Custo alvo:** hospedagem no Railway (~US$ 5–15/mês); APIs de IA e plataformas nos planos gratuitos; o fallback de IA (Claude) é pago, com teto diário
+**Custo alvo:** fase 1 roda no PC do usuário (R$ 0 de hospedagem); fase 2, se tudo der certo, Railway (~US$ 5–15/mês). APIs de IA e plataformas nos planos gratuitos; o fallback de IA (Claude) é pago, com teto diário
 
 ## 1. Objetivo
 
@@ -26,7 +26,7 @@ Detectar automaticamente os melhores momentos das lives **brasileiras** de GTA 6
 | Detecção | Pico de chat + Create Clip da Twitch; mais coleta de clipes criados pelo público |
 | Aprovação | **Nenhuma humana.** A IA decide; o Telegram serve só para monitorar e para o botão de emergência (pausar, apagar, bloquear) |
 | Conta | Perfis antigos, porém zerados (0 seguidores, 0 posts): aquecimento obrigatório com limite de posts |
-| Hospedagem | **Railway** primeiro (deploy pelo Dockerfile, volume persistente em `/data`, domínio público do Railway). O mesmo container roda **localmente** com Docker Compose + Cloudflare Tunnel. Tudo configurável só por variáveis de ambiente. |
+| Hospedagem | **Fase 1: local** no PC do usuário (Docker Compose + Cloudflare Tunnel). **Fase 2: Railway**, só depois que a fase 1 funcionar. Mesmo container, configurável só por variáveis de ambiente. |
 | IA | Gemini Flash (plano gratuito) — recebe o **vídeo**, não só o texto |
 | Transcrição/legenda | Groq Whisper (gratuito); fallback Whisper local no container |
 | Proteção contra denúncias | Crédito ao streamer em todo post, lista de bloqueio, edição transformativa |
@@ -149,7 +149,7 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 
 | Plataforma | Método | Automático e público? |
 |---|---|---|
-| Instagram Reels | Graph API (`instagram_content_publish`). Conta Business/Creator ligada a uma página do Facebook; app Meta em modo desenvolvimento com a conta como testadora. Exige o vídeo em URL pública: servido pelo próprio app em `/media/<token-aleatório>.mp4` por até 1 h (domínio do Railway, ou do Cloudflare Tunnel quando local). | **Sim**, desde o dia 1. Limite da API: ~50 posts/24 h, muito acima do nosso aquecimento. |
+| Instagram Reels | Graph API (`instagram_content_publish`). Conta Business/Creator ligada a uma página do Facebook; app Meta em modo desenvolvimento com a conta como testadora. Exige o vídeo em URL pública: servido pelo próprio app em `/media/<token-aleatório>.mp4` por até 1 h (Cloudflare Tunnel na fase 1; domínio do Railway na fase 2). | **Sim**, desde o dia 1. Limite da API: ~50 posts/24 h, muito acima do nosso aquecimento. |
 | TikTok | Content Posting API (Direct Post) | **Não**, até a auditoria. App sem auditoria só consegue postar como **privado** (`SELF_ONLY`). A auditoria leva de dias a semanas e deve ser pedida **hoje**. Até lá: `TIKTOK_MODE=off` ou `private`. |
 | YouTube Shorts | Data API `videos.insert` | **Não**, até a auditoria. Projetos de API não verificados têm uploads travados como **privado**. Pedir a auditoria hoje; até lá, desligado. |
 | Kwai | — | Fora do escopo. |
@@ -164,13 +164,13 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 
 ### 4.13 Hospedagem e portabilidade
 - **Uma única imagem Docker**, configurada 100% por variáveis de ambiente. Nenhum caminho, domínio ou credencial fica no código.
-- **Railway:** o deploy detecta o Dockerfile; variáveis ficam em *Variables*; um volume montado em `/data` guarda o SQLite e as mídias. O servidor HTTP escuta em `$PORT` (fornecido pelo Railway), com `GET /health` para o healthcheck. `PUBLIC_BASE_URL`, se vazio, vira `https://$RAILWAY_PUBLIC_DOMAIN`.
-- **Local:** `docker compose up` lê o `.env`; um serviço opcional `cloudflared` (perfil `tunnel`) cria a URL pública para o Instagram baixar o vídeo.
+- **Fase 1 — local (foco atual):** `docker compose up` lê o `.env` e sobe dois serviços: `app` e `cloudflared` (quick tunnel gratuito, sem conta). A URL do quick tunnel muda a cada reinício, então o app **descobre sozinho** a URL atual consultando o endpoint `/quicktunnel` das métricas do cloudflared (`TUNNEL_METRICS_URL`, padrão `http://cloudflared:2000/quicktunnel`). `PUBLIC_BASE_URL` fixo no env tem prioridade. Banco e mídias ficam em `./data` no PC.
+- **Fase 2 — Railway (depois):** o deploy detecta o Dockerfile; variáveis ficam em *Variables*; um volume em `/data`; o HTTP escuta em `$PORT`, com `GET /health` para o healthcheck; `PUBLIC_BASE_URL` vazio vira `https://$RAILWAY_PUBLIC_DOMAIN`. O código já respeita `PORT`, `/health` e o fallback de domínio desde a fase 1; o deploy em si fica fora deste plano.
 - **Credenciais que mudam sozinhas** (refresh tokens do Twitch e do TikTok) são gravadas no kv do SQLite e têm prioridade sobre o valor do env. Assim sobrevivem a reinícios sem editar variáveis.
 - Migrar de um lugar para o outro = copiar as variáveis (e, se quiser manter o histórico, o arquivo `/data/liveclips.db`).
 
 ## 5. Configuração (variáveis de ambiente / `.env`)
-`DATA_DIR`, `PORT`, `TWITCH_GAME_NAME`, `DRY_RUN`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_REFRESH_TOKEN`, `KICK_ENABLED`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_DAILY_BUDGET_USD`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `IG_USER_ID`, `IG_ACCESS_TOKEN`, `TIKTOK_MODE` (`off`/`private`/`public`), `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `YT_MODE` (`off`/`private`/`public`, + credenciais OAuth), `PUBLIC_BASE_URL`, e os parâmetros de ajuste: `MONITOR_MAX_CHANNELS`, `SPIKE_MULTIPLIER`, `SPIKE_MIN_MSGS`, `CLIP_RATE_SECONDS`, `RANK_THRESHOLD`, `AI_DAILY_BUDGET`, `AI_MIN_SCORE`, `POST_MIN_INTERVAL_MIN`, `POST_MAX_PER_DAY`, `POST_MAX_PER_DAY_CAP`, `QUEUE_TTL_MIN`.
+`DATA_DIR`, `PORT`, `TUNNEL_METRICS_URL`, `TWITCH_GAME_NAME`, `DRY_RUN`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_REFRESH_TOKEN`, `KICK_ENABLED`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `CLAUDE_DAILY_BUDGET_USD`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`, `IG_USER_ID`, `IG_ACCESS_TOKEN`, `TIKTOK_MODE` (`off`/`private`/`public`), `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REFRESH_TOKEN`, `YT_MODE` (`off`/`private`/`public`, + credenciais OAuth), `PUBLIC_BASE_URL`, e os parâmetros de ajuste: `MONITOR_MAX_CHANNELS`, `SPIKE_MULTIPLIER`, `SPIKE_MIN_MSGS`, `CLIP_RATE_SECONDS`, `RANK_THRESHOLD`, `AI_DAILY_BUDGET`, `AI_MIN_SCORE`, `POST_MIN_INTERVAL_MIN`, `POST_MAX_PER_DAY`, `POST_MAX_PER_DAY_CAP`, `QUEUE_TTL_MIN`.
 
 ## 6. Tratamento de erros
 - Cada módulo roda em sua própria task asyncio com supervisor: exceção → log + reinício com backoff; os outros seguem.
@@ -200,10 +200,11 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 | Kick bloqueia o coletor | Módulo isolado e desligável |
 | Cotas gratuitas estouram no lançamento | Pré-ranking filtra antes da IA; fallback para o Claude (pago, com teto diário) e Whisper local |
 | SupoClip não roda em ARM ou não tem API adequada | Pipeline próprio com FFmpeg já definido como padrão |
-| Railway fora do ar ou custo acima do esperado | Mesmo container roda local com `docker compose` + Cloudflare Tunnel |
+| PC desligado, sem internet ou dormindo durante o lançamento | Desativar suspensão do Windows; `restart: unless-stopped` no compose; fase 2 (Railway) se o local se mostrar instável |
+| Quick tunnel da Cloudflare cai ou muda de URL | O app relê a URL atual antes de cada publicação; falha no Instagram vira alerta no Telegram |
 
 ## 9. Pré-requisitos do usuário (fazer já)
-1. Conta no Railway (plano Hobby) conectada ao GitHub, e um repositório GitHub para este projeto.
+1. Docker Desktop instalado no PC (Windows). Repositório no GitHub já existe (fase 2: conectar ao Railway).
 2. Conta Twitch **bot** dedicada + app em dev.twitch.tv (client id/secret).
 3. Bot do Telegram (@BotFather) + seu chat id.
 4. Chaves gratuitas: Google AI Studio (Gemini) e Groq. Chave da API da Anthropic (platform.claude.com) com créditos (mínimo ~US$ 5) para o fallback.
@@ -214,4 +215,4 @@ Publica em cada plataforma habilitada de forma independente (uma falhar não imp
 ## 10. Cronograma
 - **Seg (hoje):** Tarefa 0 — testes de viabilidade (Create Clip numa live real, coletor Kick, SupoClip em ARM, Gemini avaliando vídeo); setup das contas.
 - **Ter:** discovery, chat_monitor, clipper, coletores, processor, evaluator, scheduler, monitor Telegram; ensaio real com GTA V BR; calibração da IA.
-- **Qua (até 00:00):** publisher, deploy no Railway, ajuste dos limiares, publicação de teste no Instagram.
+- **Qua (até 00:00):** publisher, rodando local no PC 24h, ajuste dos limiares, publicação de teste no Instagram.
