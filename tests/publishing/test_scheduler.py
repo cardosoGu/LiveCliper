@@ -257,3 +257,26 @@ async def test_status_callback_runs_after_publishing(db, tmp_path):
     s.on_status = on_status
     await s.tick()
     assert seen == [(c.id, State.PUBLISHED)]
+
+
+async def test_partial_failure_is_kept_and_retry_publishes_one_platform(db, tmp_path):
+    ig, tt = Pub("instagram"), Pub("tiktok", fail=True)
+    s, c, n, now = setup(db, tmp_path, [ig, tt])
+    await s.tick()
+    got = db.get(c.id)
+    assert got.state is State.PUBLISHED and got.reason.startswith("tiktok:")
+    tt.fail = False
+    msg = await s.publish_to(got, "tiktok")
+    assert "TikTok" in msg or "tiktok" in msg
+    assert [p["platform"] for p in db.publications_for(c.id)] == ["instagram", "tiktok"]
+    assert db.get(c.id).reason is None
+    assert len(ig.jobs) == 1  # o Reels não foi reenviado
+
+
+async def test_retry_failure_is_reported(db, tmp_path):
+    tt = Pub("tiktok", fail=True)
+    s, c, n, now = setup(db, tmp_path, [Pub("instagram"), tt])
+    await s.tick()
+    msg = await s.publish_to(db.get(c.id), "tiktok")
+    assert "caiu" in msg and db.get(c.id).reason.startswith("tiktok:")
+    assert "não configurad" in await s.publish_to(db.get(c.id), "youtube")

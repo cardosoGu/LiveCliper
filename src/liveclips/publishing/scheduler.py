@@ -105,11 +105,42 @@ class Scheduler:
             except Exception as e:
                 errors.append(f"{p.name}: {e}")
         if results:
+            c.reason = "; ".join(errors)[:500] or None  # falhas parciais: botão 🔁 no card
             self._on_success(c, now)
             await self.notifier.post_published(c, verdict, results, errors)
         else:
             await self._on_total_failure(c, now, errors)
         await self._notify_status(c)
+
+    async def publish_to(self, c: Candidate, platform: str) -> str:
+        """🔁 do card: reenvia a uma plataforma só (ignora intervalo, limite e liga/desliga)."""
+        pub = next((p for p in self.publishers if p.name == platform), None)
+        if pub is None:
+            return f"{platform} não configurado no .env."
+        verdict = Verdict.model_validate_json(c.ai_json)
+        if not await self.ensure_rendered(c, verdict):
+            return f"💥 vídeo indisponível: {c.reason}"
+        now = self.now_fn()
+        try:
+            url = (await self.media.expose(c.vertical_path)
+                   if getattr(pub, "needs_public_url", False) else "")
+            r = await pub.publish(PublishJob(Path(c.vertical_path), url,
+                                             build_caption(verdict, c.platform, c.channel),
+                                             verdict.title))
+        except Exception as e:
+            others = [e2 for e2 in (c.reason or "").split("; ")
+                      if e2 and not e2.startswith(f"{platform}:")]
+            c.reason = "; ".join([*others, f"{platform}: {e}"])[:500]
+            self.db.update(c)
+            await self._notify_status(c)
+            return f"❌ {platform}: {e}"[:500]
+        self.db.record_publication(c.id, r.platform, r.post_id, r.url, now)
+        rest = [e2 for e2 in (c.reason or "").split("; ")
+                if e2 and not e2.startswith(f"{platform}:")]
+        c.reason = "; ".join(rest) or None
+        self.db.update(c)
+        await self._notify_status(c)
+        return f"🔁 {platform}: enviado {r.url or r.post_id}"
 
     async def _notify_status(self, c: Candidate) -> None:
         if self.on_status is None:

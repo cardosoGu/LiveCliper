@@ -21,8 +21,8 @@ class FakeTransport:
         self.posts.append((candidate_id, text, video, link, buttons))
         return 1000 + len(self.posts)
 
-    async def edit(self, message_id, candidate_id, text, buttons):
-        self.edits.append((message_id, candidate_id, text, buttons))
+    async def edit(self, message_id, candidate_id, text, buttons, retry=()):
+        self.edits.append((message_id, candidate_id, text, buttons, retry))
 
 
 def make_desk(db, tmp_path, size=10, limit_mb=10.0, render_ok=True, shrink_size=5, **env):
@@ -195,3 +195,33 @@ async def test_new_card_posted_even_with_many_pending_cards(db, tmp_path):
     new = awaiting(db, clip_id="twitch:novo", rank=0)
     assert await desk.tick() == 1
     assert t.posts[0][0] == new.id
+
+
+async def test_failed_platform_gets_retry_button(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    calls = []
+
+    async def retry(c, platform):
+        calls.append((c.id, platform))
+        return "🔁 reenviado"
+
+    desk.retry = retry
+    c = awaiting(db)
+    await desk.tick()
+    await desk.handle("approve", c.id)
+    got = db.get(c.id)
+    db.record_publication(c.id, "instagram", "ig1", "https://ig/p/1", got.created_at)
+    got.state, got.reason = State.PUBLISHED, "tiktok: token vencido"
+    db.update(got)
+    await desk.on_status(got)
+    msg_id, cid, text, buttons, retry_btns = t.edits[-1]
+    assert "TikTok ❌ token vencido" in text and retry_btns == ("tiktok",)
+    assert desk.failed_platforms(got) == ["tiktok"]
+    assert await desk.handle("retry-tiktok", c.id) == "🔁 reenviado"
+    assert calls == [(c.id, "tiktok")]
+
+
+async def test_retry_only_for_published_clips(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    c = awaiting(db)
+    assert "não foi publicado" in await desk.handle("retry-tiktok", c.id)

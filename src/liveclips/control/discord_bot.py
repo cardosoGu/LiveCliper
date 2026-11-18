@@ -251,7 +251,7 @@ class DiscordApprovalTransport:
         msg = await channel.send(body[:2000], **kwargs)
         return msg.id
 
-    async def edit(self, message_id, candidate_id, text, buttons):
+    async def edit(self, message_id, candidate_id, text, buttons, retry=()):
         channel = await self.bot.approval_channel()
         msg = await channel.fetch_message(message_id)
         await msg.edit(content=text[:2000],

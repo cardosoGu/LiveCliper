@@ -17,7 +17,7 @@ from .runtime import RuntimeSettings
 
 log = logging.getLogger(__name__)
 
-ACTIONS = ("approve", "now", "edit", "discard")
+ACTIONS = ("approve", "now", "edit", "discard", "retry-instagram", "retry-youtube", "retry-tiktok")
 AGE_WARN_H = 2  # cards do automático mostram a idade a partir daqui
 PLATFORM_LABEL = {"instagram": "Reels", "youtube": "Shorts", "tiktok": "TikTok"}
 
@@ -39,7 +39,7 @@ class ApprovalTransport(Protocol):
                    candidate_id: int, buttons: bool) -> int: ...
 
     async def edit(self, message_id: int, candidate_id: int, text: str,
-                   buttons: bool) -> None: ...
+                   buttons: bool, retry: tuple[str, ...] = ()) -> None: ...
 
 
 class LogApprovalTransport:
@@ -49,7 +49,7 @@ class LogApprovalTransport:
         log.info("[aprovação #%s] %s", candidate_id, text)
         return 0
 
-    async def edit(self, message_id, candidate_id, text, buttons):
+    async def edit(self, message_id, candidate_id, text, buttons, retry=()):
         log.info("[aprovação #%s] %s", candidate_id, text)
 
 
@@ -59,7 +59,8 @@ class ApprovalDesk:
                  shrink: Callable[[Path, Path], Awaitable[Path]],
                  expose: Callable[[str], Awaitable[str]],
                  platform_names: list[str], upload_limit_mb: float = 10.0,
-                 now_fn: Callable = utcnow):
+                 now_fn: Callable = utcnow,
+                 retry: Callable[[Candidate, str], Awaitable[str]] | None = None):
         self.db = db
         self.runtime = runtime
         self.transport = transport
@@ -69,6 +70,7 @@ class ApprovalDesk:
         self.platform_names = platform_names
         self.limit_bytes = int(upload_limit_mb * 1024 * 1024)
         self.now_fn = now_fn
+        self.retry = retry
         self._age_shown: dict[int, int] = {}
 
     # --- cards ------------------------------------------------------------
@@ -132,6 +134,11 @@ class ApprovalDesk:
         await self.transport.edit(c.approval_message_id, c.id,
                                   self.card_text(c, verdict), True)
 
+    def failed_platforms(self, c: Candidate) -> list[str]:
+        if c.state is not State.PUBLISHED or not c.reason:
+            return []
+        return [n for n in self.platform_names if f"{n}:" in c.reason]
+
     def card_text(self, c: Candidate, verdict: Verdict, no_video: bool = False) -> str:
         targets = ", ".join(PLATFORM_LABEL.get(n, n) for n in self.platform_names
                             if self.runtime.platform_enabled(n)) or "nenhuma (todas desligadas)"
@@ -154,6 +161,11 @@ class ApprovalDesk:
         c = self.db.get(candidate_id)
         if c is None:
             return "Clipe não encontrado."
+        if action.startswith("retry-"):
+            platform = action.removeprefix("retry-")
+            if c.state is not State.PUBLISHED or self.retry is None:
+                return "Esse clipe não foi publicado ainda."
+            return await self.retry(c, platform)
         if c.state is not State.AWAITING_APPROVAL:
             return f"Esse clipe já foi decidido ({c.state.value})."
         if action in ("approve", "now"):
@@ -209,7 +221,8 @@ class ApprovalDesk:
         verdict = Verdict.model_validate_json(c.ai_json)
         text = self.card_text(c, verdict) + "\n\n" + self.status_line(c)
         await self.transport.edit(c.approval_message_id, c.id, text,
-                                  c.state is State.AWAITING_APPROVAL)
+                                  c.state is State.AWAITING_APPROVAL,
+                                  tuple(self.failed_platforms(c)))
 
     def status_line(self, c: Candidate) -> str:
         if c.state is State.APPROVED:
@@ -228,6 +241,9 @@ class ApprovalDesk:
                     parts.append(f"{label} 📥 rascunho/privado (abra o app do TikTok)")
                 else:
                     parts.append(f"{label} 🔒 enviado (privado)")
+            for name in self.failed_platforms(c):
+                err = next((e for e in c.reason.split("; ") if e.startswith(f"{name}:")), "")
+                parts.append(f"{PLATFORM_LABEL.get(name, name)} ❌ {err.removeprefix(f'{name}:').strip()}")
             return "📤 publicado — " + " · ".join(parts)
         if c.state is State.DISCARDED:
             return "❌ descartado"
