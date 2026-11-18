@@ -111,8 +111,8 @@ async def amain() -> None:
                                                 min_viewers=cfg.min_viewers),
             "clipper": clipper.run,
             "twitch_clips": lambda: collector_loop(
-                lambda now: collect_twitch_public(twitch, game_id, db, viewers_cache, now,
-                                                cfg.min_viewers),
+                lambda now: collect_twitch_public(twitch, list(chat.channels.values()),
+                                                db, now),
                 180, "twitch_clips"),
             "pipeline": pipeline.run,
             "scheduler": scheduler.run,

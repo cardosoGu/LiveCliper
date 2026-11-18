@@ -130,3 +130,13 @@ async def test_foreign_speech_rejected_before_ai(db, tmp_path):
     assert p.evaluator.calls == 0 and p.evals_today() == 0
     assert got.vertical_path is None  # nem renderiza
     assert not (Path(got.raw_path).parent / "subs.ass").exists()
+
+
+def test_backoff_grows_while_ai_is_down_and_resets(db, tmp_path):
+    p, _ = make_pipeline(db, tmp_path, verdict())
+    p.ai_down = True
+    assert [p.next_delay() for _ in range(6)] == [60, 120, 240, 480, 900, 900]
+    p.ai_down = False
+    assert p.next_delay() == 5
+    p.ai_down = True
+    assert p.next_delay() == 60

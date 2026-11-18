@@ -46,6 +46,17 @@ class Pipeline:
     now_fn: Callable = utcnow
     concurrency: int = 2
     ai_down: bool = False
+    _down_streak: int = 0
+
+    def next_delay(self) -> float:
+        """Segundos até o próximo tick: 5 s normalmente; com a IA fora do ar (cota
+        esgotada, sobrecarga) 1, 2, 4, 8 e no máximo 15 min, para não gastar a cota
+        tentando de novo a cada minuto."""
+        if not self.ai_down:
+            self._down_streak = 0
+            return 5
+        self._down_streak += 1
+        return min(60 * 2 ** (self._down_streak - 1), 900)
 
     def _evals_key(self) -> str:
         return f"ai_evals:{local_day(self.now_fn()).isoformat()}"
@@ -143,4 +154,4 @@ class Pipeline:
     async def run(self) -> None:
         while True:
             await self.tick()
-            await asyncio.sleep(60 if self.ai_down else 5)
+            await asyncio.sleep(self.next_delay())

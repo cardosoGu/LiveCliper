@@ -6,6 +6,7 @@ import httpx
 import respx
 
 from liveclips.capture.kick.public_clips import KICK_CLIPS_URL, collect_kick, parse_kick_clips
+from liveclips.capture.twitch.chat import ChannelInfo
 from liveclips.capture.twitch.public_clips import collect_twitch_public
 from liveclips.core.models import State
 from liveclips.core.timeutil import parse_iso
@@ -20,16 +21,36 @@ def clip(cid, lang, name="Gaules", secs=0):
 
 
 class FakeAPI:
-    async def get_clips(self, game_id, started_at, ended_at):
-        return [clip("a", "pt"), clip("b", "en", name="Other"), clip("c", "pt", name="Loud")]
+    def __init__(self):
+        self.seen = []
+
+    async def get_broadcaster_clips(self, broadcaster_id, started_at, ended_at):
+        self.seen.append(broadcaster_id)
+        return {"1": [clip("a", "pt"), clip("b", "en")],
+                "2": [clip("c", "pt", name="Loud")]}[broadcaster_id]
 
 
-async def test_twitch_public_keeps_only_portuguese(db):
+async def test_twitch_public_queries_each_monitored_channel(db):
     now = parse_iso("2026-11-19T03:05:00Z")
-    added = await collect_twitch_public(FakeAPI(), "g", db, {"gaules": 5000}, now)
+    api = FakeAPI()
+    channels = [ChannelInfo("gaules", "1", 5000), ChannelInfo("loud", "2", 3000)]
+    added = await collect_twitch_public(api, channels, db, now)
+    assert api.seen == ["1", "2"]
     assert added == 2
-    ids = {c.clip_id for c in db.by_state(State.DETECTED)}
-    assert ids == {"twitch:a", "twitch:c"}
+    got = {c.clip_id: c.viewers for c in db.by_state(State.DETECTED)}
+    assert got == {"twitch:a": 5000, "twitch:c": 3000}  # clipe em ingles fica de fora
+
+
+async def test_twitch_public_survives_one_channel_failing(db):
+    class Flaky(FakeAPI):
+        async def get_broadcaster_clips(self, broadcaster_id, started_at, ended_at):
+            if broadcaster_id == "1":
+                raise RuntimeError("boom")
+            return await super().get_broadcaster_clips(broadcaster_id, started_at, ended_at)
+
+    now = parse_iso("2026-11-19T03:05:00Z")
+    channels = [ChannelInfo("gaules", "1", 5000), ChannelInfo("loud", "2", 3000)]
+    assert await collect_twitch_public(Flaky(), channels, db, now) == 1
 
 
 def test_parse_kick_fixture():
@@ -45,16 +66,3 @@ async def test_collect_kick_inserts_recent(db):
     now = parse_iso("2026-11-19T03:10:00Z") + timedelta(minutes=5)
     async with httpx.AsyncClient() as http:
         assert await collect_kick(http, "gta", db, now) == 1
-
-
-async def test_twitch_public_queries_each_category(db):
-    seen = []
-
-    class MultiAPI:
-        async def get_clips(self, game_id, started_at, ended_at):
-            seen.append(game_id)
-            return [clip(f"x{game_id}", "pt", name=f"canal{game_id}")]
-
-    now = parse_iso("2026-11-19T03:05:00Z")
-    assert await collect_twitch_public(MultiAPI(), ["1", "2"], db, {}, now) == 2
-    assert seen == ["1", "2"]

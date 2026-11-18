@@ -65,3 +65,14 @@ async def test_summary_counts_messages_and_spikes():
     await mon.check_spikes(60.0)
     s = mon.summary(60.0)
     assert "36 msgs/min" in s and "gaules 30/min" in s and "picos detectados desde o início: 1" in s
+
+
+def test_commands_and_bots_do_not_count_as_hype():
+    mon = ChatMonitor(lambda i, s: None, FakeDetector)
+    mon.set_channels([ChannelInfo("gaules", "1", 5000)])
+    mon.handle_line(":a!a@a PRIVMSG #gaules :!pokeidle catch", 1.0)
+    mon.handle_line(":a!a@a PRIVMSG #gaules :  !pix", 1.0)
+    mon.handle_line(":nightbot!nightbot@nightbot PRIVMSG #gaules :KKKKK", 1.0)
+    mon.handle_line(":StreamElements!se@se PRIVMSG #gaules :kkkk", 1.0)
+    mon.handle_line(":b!b@b PRIVMSG #gaules :KKKKKKK", 1.0)
+    assert mon.detectors["gaules"].msgs == [(1.0, "KKKKKKK")]

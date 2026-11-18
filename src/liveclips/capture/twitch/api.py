@@ -118,6 +118,14 @@ class TwitchAPI:
         })
         return j.get("data", [])
 
+    async def get_broadcaster_clips(self, broadcaster_id: str, started_at: datetime,
+                                    ended_at: datetime) -> list[dict]:
+        j = await self._request("GET", "/clips", params={
+            "broadcaster_id": broadcaster_id, "started_at": _iso(started_at),
+            "ended_at": _iso(ended_at), "first": 100,
+        })
+        return j.get("data", [])
+
     async def create_clip(self, broadcaster_id: str) -> str:
         j = await self._request("POST", "/clips", user=True,
                                 params={"broadcaster_id": broadcaster_id})

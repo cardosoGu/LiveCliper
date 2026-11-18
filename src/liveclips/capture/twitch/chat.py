@@ -21,6 +21,27 @@ class ChannelInfo:
     viewers: int
 
 
+# bots de chat comuns no Brasil: falam em rajada (sorteios, timers, jogos idle) e
+# não são reação do público
+CHAT_BOTS = frozenset({
+    "nightbot", "streamelements", "streamlabs", "moobot", "fossabot", "wizebot",
+    "botisimo", "sery_bot", "pokemoncommunitygame", "commanderroot", "soundalerts",
+    "own3d", "kofistreambot", "tangiabot", "blerp", "streamstickers",
+})
+
+
+def sender(line: str) -> str:
+    """':nick!nick@... PRIVMSG' -> 'nick' (minúsculo); '' se não houver prefixo."""
+    if not line.startswith(":"):
+        return ""
+    return line[1:].split("!", 1)[0].split(" ", 1)[0].lower()
+
+
+def is_noise(nick: str, text: str) -> bool:
+    """Comandos (!pix, !pokeidle...) e mensagens de bots não indicam um momento da live."""
+    return text.lstrip().startswith("!") or nick in CHAT_BOTS
+
+
 def parse_privmsg(line: str) -> tuple[str, str] | None:
     """':nick!nick@nick.tmi.twitch.tv PRIVMSG #canal :mensagem' -> ('canal', 'mensagem')."""
     if " PRIVMSG #" not in line:
@@ -86,7 +107,7 @@ class ChatMonitor:
         if parsed:
             channel, text = parsed
             det = self.detectors.get(channel)
-            if det is not None:
+            if det is not None and not is_noise(sender(line), text):
                 det.add_message(now, text)
                 self._msgs[channel] += 1
         return None
