@@ -75,11 +75,14 @@ class ApprovalDesk:
     async def tick(self) -> int:
         posted = 0
         for c in self.db.by_state(State.AWAITING_APPROVAL, 50):
-            if c.approval_message_id is None:
-                if await self._post(c):
-                    posted += 1
-            else:
-                await self._refresh_age(c)
+            try:
+                if c.approval_message_id is None:
+                    if await self._post(c):
+                        posted += 1
+                else:
+                    await self._refresh_age(c)
+            except Exception as e:  # um card quebrado não trava a fila inteira
+                log.warning("card do clipe %s falhou: %s", c.id, e)
         return posted
 
     async def _post(self, c: Candidate) -> bool:

@@ -160,3 +160,21 @@ async def test_old_automatic_card_shows_age(db, tmp_path):
     assert "⏰ há 3 h" in t.edits[-1][2]
     await desk.tick()
     assert len(t.edits) == 1  # só edita quando a hora muda
+
+
+async def test_one_broken_card_does_not_block_the_others(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    broken = set()
+
+    async def post(text, video, link, candidate_id, buttons):
+        if candidate_id in broken:
+            raise RuntimeError("discord fora do ar")
+        return await FakeTransport.post(t, text, video, link, candidate_id, buttons)
+
+    t.post = post
+    bad, good = awaiting(db, clip_id="bad"), awaiting(db, clip_id="good")
+    broken.add(bad.id)
+    assert await desk.tick() == 1
+    assert db.get(good.id).approval_message_id == 1001
+    assert db.get(bad.id).approval_message_id is None
+    assert db.get(bad.id).state is State.AWAITING_APPROVAL
