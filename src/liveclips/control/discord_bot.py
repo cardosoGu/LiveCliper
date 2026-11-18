@@ -35,11 +35,17 @@ def build_panel_view(s: PanelState) -> discord.ui.View:
                                     row=0))
     view.add_item(discord.ui.Button(label="➕ Categoria", custom_id="panel:addcat",
                                     style=discord.ButtonStyle.secondary, row=0))
-    view.add_item(discord.ui.Select(
-        custom_id="panel:cats", placeholder="Categorias do automático", row=1,
-        min_values=1, max_values=max(1, len(s.known)),
-        options=[discord.SelectOption(label=n[:100], value=n[:100], default=n in s.selected)
-                 for n in s.known]))
+    known = s.known[:25]  # limite do Discord por seletor
+    options = [discord.SelectOption(label=n[:100], value=n[:100], default=n in s.selected)
+               for n in known]
+    if options:
+        view.add_item(discord.ui.Select(
+            custom_id="panel:cats", placeholder="Categorias do automático", row=1,
+            min_values=1, max_values=len(options), options=options))
+    else:
+        view.add_item(discord.ui.Select(
+            custom_id="panel:cats", placeholder="Nenhuma categoria — use ➕ Categoria", row=1,
+            disabled=True, options=[discord.SelectOption(label="(vazio)", value="-")]))
     view.add_item(discord.ui.Select(
         custom_id="panel:viewers", row=2,
         options=[discord.SelectOption(label=f"mín. {v} espectadores", value=str(v),
@@ -83,6 +89,8 @@ class DiscordBot:
         self.panel: Panel | None = None
         self._ready = asyncio.Event()
         self._channel: discord.abc.Messageable | None = None
+        self._panel_lock = asyncio.Lock()  # refresh_panel concorrente duplicaria a mensagem
+        self._warned_no_panel = False
         self.client.event(self.on_ready)
         self.client.event(self.on_interaction)
 
@@ -99,6 +107,9 @@ class DiscordBot:
     async def _panel_message(self, key: str, content: str, view: discord.ui.View) -> None:
         channel = self.channels.get("painel")
         if channel is None:
+            if not self._warned_no_panel:
+                self._warned_no_panel = True
+                log.warning("canal #painel não encontrado: painel não será publicado")
             return
         saved = self.db.kv_get(key)
         if saved:
@@ -115,10 +126,21 @@ class DiscordBot:
         if self.panel is None:
             return
         await asyncio.wait_for(self._ready.wait(), timeout=120)
-        s = self.panel.state()
-        await self._panel_message("panel:message_id", s.text, build_panel_view(s))
-        await self._panel_message("panel:platforms_message_id", "**Plataformas**",
-                                  build_platforms_view(s))
+        async with self._panel_lock:
+            s = self.panel.state()
+            failed = None
+            for key, content, build in (
+                    ("panel:message_id", s.text, build_panel_view),
+                    ("panel:platforms_message_id", "**Plataformas**", build_platforms_view)):
+                try:  # um erro numa mensagem não impede a outra
+                    await self._panel_message(key, content, build(s))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.exception("mensagem do painel %s não atualizada", key)
+                    failed = failed or e
+            if failed is not None:
+                raise failed
 
     async def run_panel(self) -> None:
         while True:
@@ -197,10 +219,15 @@ class DiscordBot:
             await interaction.response.defer(ephemeral=True, thinking=True)
             try:
                 msg = await self.panel.handle(action, list((interaction.data or {}).get("values", [])))
-                await self.refresh_panel()
             except Exception as e:
                 log.exception("ação do painel %s falhou", action)
                 msg = f"Erro: {e}"
+            else:
+                try:
+                    await self.refresh_panel()
+                except Exception:
+                    log.exception("painel não atualizado após %s", action)
+                    msg += " (painel não atualizado)"
             await interaction.followup.send(msg[:2000], ephemeral=True)
             return
         parsed = parse_custom_id(custom_id)
@@ -332,10 +359,15 @@ class AddCategoryModal(discord.ui.Modal, title="Adicionar categoria"):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             msg = await self.bot.panel.handle("addcat", [str(self.name.value)])
-            await self.bot.refresh_panel()
         except Exception as e:
             log.exception("adicionar categoria falhou")
             msg = f"Erro: {e}"
+        else:
+            try:
+                await self.bot.refresh_panel()
+            except Exception:
+                log.exception("painel não atualizado após adicionar categoria")
+                msg += " (painel não atualizado)"
         await interaction.followup.send(msg[:2000], ephemeral=True)
 
 

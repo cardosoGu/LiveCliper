@@ -263,7 +263,8 @@ async def test_concurrent_retry_is_refused(db, tmp_path):
     c = _published_with_failure(db, desk)
     first = asyncio.create_task(desk.handle("retry-tiktok", c.id))
     await asyncio.sleep(0)
-    assert "já em andamento" in await desk.handle("retry-tiktok", c.id)
+    second = await asyncio.wait_for(desk.handle("retry-tiktok", c.id), timeout=2)
+    assert "já em andamento" in second
     gate.set()
     assert await first == "ok"
     assert calls == ["tiktok"]
