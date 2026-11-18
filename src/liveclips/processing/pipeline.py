@@ -115,8 +115,9 @@ class Pipeline:
         elif verdict.score < self.min_score():
             self._set(c, State.REJECTED_AI, f"nota {verdict.score:.1f}: {verdict.reason}")
         else:
-            self._set(c, State.QUEUED, verdict.reason)
-            log.info("na fila: %s (%s, nota %.1f)", c.clip_id, c.channel, verdict.score)
+            self._set(c, State.AWAITING_APPROVAL, verdict.reason)
+            log.info("aguardando aprovação: %s (%s, nota %.1f)",
+                     c.clip_id, c.channel, verdict.score)
 
     async def _prepare_media(self, c: Candidate, work: Path) -> tr.Transcript | None:
         """Baixa, transcreve e grava a legenda (subs.ass). Retorna None se o clipe foi rejeitado

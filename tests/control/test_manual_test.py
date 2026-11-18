@@ -49,7 +49,7 @@ class FakeChat:
 class FakePipeline:
     """Imita o pipeline real: grava vídeo e veredito no candidato."""
 
-    def __init__(self, db, tmp_path, score=8.0, safe=True, state=State.QUEUED):
+    def __init__(self, db, tmp_path, score=8.0, safe=True, state=State.AWAITING_APPROVAL):
         self.db, self.tmp, self.score, self.safe, self.state = db, tmp_path, score, safe, state
         self.processed = []
 
@@ -97,9 +97,10 @@ async def test_uses_most_active_channel_and_never_queues(db, tmp_path):
     assert api.created_for == ["2"]  # loud é o mais ativo no chat
     [c] = [db.get(1)]
     assert c.state is State.TESTED and c.source == "manual_test"
-    assert "SERIA PUBLICADO" in r.text and "Nota da IA: **8.0**" in r.text
+    assert "IRIA PARA APROVAÇÃO" in r.text and "Nota da IA: **8.0**" in r.text
     assert "twitch.tv/loud" in r.text and r.preview_path.name == "preview.mp4"
     assert db.by_state(State.QUEUED) == []
+    assert db.by_state(State.AWAITING_APPROVAL) == []  # /testar nunca vai para aprovação
     # render final (tela dividida + título) a partir do vídeo original, com a webcam da IA
     [(src, dst, credit, subs, title, fc)] = RENDERS
     assert (src, dst, credit, subs, title) == ("raw.mp4", "final.mp4", "twitch.tv/loud",

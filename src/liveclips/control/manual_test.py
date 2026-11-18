@@ -28,7 +28,7 @@ from ..publishing.caption import build_caption
 log = logging.getLogger(__name__)
 
 OUTCOMES = {
-    State.QUEUED: "✅ SERIA PUBLICADO",
+    State.AWAITING_APPROVAL: "✅ IRIA PARA APROVAÇÃO",
     State.REJECTED_AI: "❌ seria rejeitado",
     State.DETECTED: "⚠️ IA indisponível (nenhum modelo respondeu)",
     State.FAILED: "💥 falhou no processamento",

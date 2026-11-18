@@ -59,11 +59,11 @@ def make_pipeline(db, tmp_path, result, ops=None, **env):
     return p, c
 
 
-async def test_good_clip_is_queued(db, tmp_path: Path):
+async def test_good_clip_awaits_approval(db, tmp_path: Path):
     p, c = make_pipeline(db, tmp_path, verdict(8.0))
     assert await p.tick() == 1
     got = db.get(c.id)
-    assert got.state is State.QUEUED and got.ai_score == 8.0
+    assert got.state is State.AWAITING_APPROVAL and got.ai_score == 8.0
     assert got.transcript == "olha" and Path(got.raw_path).exists()
     # o vertical só é renderizado depois de aprovado (no scheduler); a IA vê o original
     assert got.vertical_path is None
