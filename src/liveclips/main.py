@@ -18,6 +18,7 @@ from .capture.twitch.discovery import discovery_loop
 from .capture.twitch.public_clips import collect_twitch_public
 from .control.manual_test import ManualTester
 from .control.monitor import LogTransport, Monitor
+from .control.runtime import RuntimeSettings
 from .core.config import Settings, load_settings
 from .core.db import DB
 from .core.supervisor import supervise
@@ -57,6 +58,7 @@ async def amain() -> None:
     media_dir.mkdir(parents=True, exist_ok=True)
     db = DB(str(data / "liveclips.db"))
     db.reset_processing()
+    runtime = RuntimeSettings(db, cfg)
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
         bot = None
@@ -93,7 +95,7 @@ async def amain() -> None:
                                                    min_msgs=cfg.spike_min_msgs))
         publishers = build_publishers(cfg, db, http)
         media_server = MediaServer(cfg, http)
-        monitor = Monitor(db, transport, {p.name: p for p in publishers}, cfg,
+        monitor = Monitor(db, transport, {p.name: p for p in publishers}, cfg, runtime=runtime,
                           channel_count=lambda: len(chat.channels),
                           chat_summary=chat.summary)
         if bot is not None:
@@ -101,7 +103,7 @@ async def amain() -> None:
         pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)
         monitor.tester = ManualTester(twitch, db, pipeline, chat,
                                       followup_delay_s=cfg.clip_followup_s)
-        scheduler = Scheduler(db, cfg, publishers, media_server, monitor)
+        scheduler = Scheduler(db, cfg, publishers, media_server, monitor, runtime)
 
         await media_server.start()
         jobs = {
@@ -131,7 +133,7 @@ async def amain() -> None:
         await monitor.info(
             f"🤖 **liveclips iniciado** · categorias: {', '.join(found)} · "
             f"mín. {cfg.min_viewers} espectadores · "
-            f"plataformas: {plats}" + (" · 🧪 MODO ENSAIO" if cfg.dry_run else ""))
+            f"plataformas configuradas: {plats}")
         await asyncio.gather(*(supervise(n, f, monitor.alert) for n, f in jobs.items()))
 
 

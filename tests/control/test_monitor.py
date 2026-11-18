@@ -111,15 +111,6 @@ async def test_post_published_has_buttons(db):
     assert buttons == [("🗑️ Apagar post", f"del:{c.id}"), ("🚫 Bloquear canal", "block:gaules")]
 
 
-async def test_dry_run_preview_sends_file(db, tmp_path):
-    m, t, _ = make_monitor(db)
-    c = make_candidate(ai_score=7.5)
-    await m.dry_run_preview(c, V, "legenda final", tmp_path / "p.mp4")
-    await m.flush()
-    path, text = t.files[0]
-    assert "ENSAIO" in text and "legenda final" in text
-
-
 async def test_sending_never_blocks_the_caller(db):
     import asyncio
 
@@ -139,7 +130,7 @@ async def test_file_failure_falls_back_to_text(db, tmp_path):
 
     t = NoFiles()
     m = Monitor(db, t, {}, load_settings({}))
-    await m.dry_run_preview(make_candidate(ai_score=7.0), V, "leg", tmp_path / "p.mp4")
+    m._enqueue(("file", str(tmp_path / "p.mp4"), "leg"))
     await m.flush()
     assert "prévia não enviada" in t.sent[0][0]
 
@@ -152,3 +143,18 @@ async def test_outbox_drops_oldest_when_full(db):
         await m.info(f"msg {i}")
     await m.flush()
     assert len(t.sent) == mon.OUTBOX_MAX and t.sent[0][0] == "msg 5"
+
+
+def test_platform_command_turns_platforms_on_and_off(db):
+    from liveclips.control.runtime import RuntimeSettings
+
+    cfg = load_settings({"DRY_RUN": "1"})
+    rt = RuntimeSettings(db, cfg)
+    m = Monitor(db, FakeTransport(), {}, cfg, runtime=rt)
+    assert "ligado" in m.handle_command("plataforma", "tiktok on")
+    assert rt.platform_enabled("tiktok")
+    assert "desligado" in m.handle_command("plataforma", "TikTok OFF")
+    assert not rt.platform_enabled("tiktok")
+    assert "Uso:" in m.handle_command("plataforma", "orkut on")
+    status = m.status_text()
+    assert "Plataformas: nenhuma ligada" in status and "ensaio" not in status

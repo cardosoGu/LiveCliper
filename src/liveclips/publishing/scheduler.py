@@ -1,29 +1,29 @@
-"""Loop de publicação: aplica a política e publica em cada plataforma (ou ensaio)."""
+"""Loop de publicação: publica, nas plataformas ligadas, os clipes que o admin aprovou."""
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
 from ..ai.verdict import Verdict
 from ..core.config import Settings
 from ..core.db import DB
-from ..core.models import Candidate, State, is_expired
+from ..control.runtime import RuntimeSettings
+from ..core.models import Candidate, State
 from ..core.timeutil import local_day, local_midnight_utc, utcnow
 from ..core.credits import credit_text
-from ..processing.ffmpeg import make_preview, render_final
+from ..processing.ffmpeg import render_final
 from .caption import build_caption
 from .platforms.base import PublishJob
-from .policy import can_post_now, daily_limit, pick_next
+from .policy import can_post_now
 
 log = logging.getLogger(__name__)
 
 
 class Notifier(Protocol):
     async def post_published(self, c, verdict, results, errors) -> None: ...
-    async def dry_run_preview(self, c, verdict, caption, preview_path) -> None: ...
     async def alert(self, text: str) -> None: ...
 
 
@@ -36,76 +36,66 @@ MAX_ATTEMPTS_PER_CLIP = 3
 
 class Scheduler:
     def __init__(self, db: DB, cfg: Settings, publishers: list, media, notifier: Notifier,
-                 now_fn: Callable[[], datetime] = utcnow,
-                 preview_fn: Callable[[Path, Path], Awaitable[Path]] = make_preview,
-                 render_fn: Callable[..., Awaitable[Path]] = render_final):
+                 runtime: RuntimeSettings, now_fn: Callable[[], datetime] = utcnow,
+                 render_fn: Callable[..., Awaitable[Path]] = render_final,
+                 on_status: Callable[[Candidate], Awaitable[None]] | None = None):
         self.db = db
         self.cfg = cfg
         self.publishers = publishers
         self.media = media
         self.notifier = notifier
+        self.runtime = runtime
         self.now_fn = now_fn
-        self.preview_fn = preview_fn
         self.render_fn = render_fn
+        self.on_status = on_status
         self.fail_streak = 0
         self.retry_at: datetime | None = None
         self.attempts: dict[int, int] = {}
 
-    def day_index(self, now: datetime) -> int:
-        first = self.db.kv_get("first_post_day")
-        if not first:
-            return 0
-        return (local_day(now) - date.fromisoformat(first)).days
-
-    def paused(self) -> bool:
-        return self.db.kv_get("paused") == "1"
+    def enabled_publishers(self) -> list:
+        return [p for p in self.publishers if self.runtime.platform_enabled(p.name)]
 
     async def tick(self) -> bool:
-        if self.paused():
-            return False
+        if self.runtime.paused() or not self.enabled_publishers():
+            return False  # pausado ou tudo desligado: os aprovados esperam
         now = self.now_fn()
         if self.retry_at is not None and now < self.retry_at:
             return False
-        fresh = []
-        for c in self.db.by_state(State.QUEUED, 200):
-            if is_expired(c, now, self.cfg.queue_ttl_min):
-                c.state = State.EXPIRED
-                c.reason = "expirou na fila"
-                self.db.update(c)
-            else:
-                fresh.append(c)
-        if not fresh:
+        approved = self.db.by_state(State.APPROVED, 200)
+        if not approved:
             return False
-        last = self.db.last_publication()
-        limit = daily_limit(self.day_index(now), self.cfg.post_max_per_day,
-                            self.cfg.post_max_per_day_step, self.cfg.post_max_per_day_cap)
+        limit = self.runtime.post_max_per_day()
         posts_today = self.db.publications_count_since(local_midnight_utc(now))
-        if not can_post_now(now, last[0] if last else None, posts_today, limit,
-                            self.cfg.post_min_interval_min):
+        if posts_today >= limit:
             return False
-        c = pick_next(fresh, last[1] if last else None)
-        if c is None:
-            return False
+        urgent = [c for c in approved if c.priority > 0]
+        if urgent:  # "⚡ Agora": ignora o intervalo, não o limite diário
+            c = min(urgent, key=lambda x: x.id)
+        else:
+            last = self.db.last_publication()
+            if not can_post_now(now, last[0] if last else None, posts_today, limit,
+                                self.runtime.post_interval_min()):
+                return False
+            c = min(approved, key=lambda x: x.id)  # ordem de aprovação
         await self.publish(c, now)
         return True
 
     async def publish(self, c: Candidate, now: datetime) -> None:
         verdict = Verdict.model_validate_json(c.ai_json)
         caption = build_caption(verdict, c.platform, c.channel)
-        if not await self._render_final(c, verdict):
+        if not await self.ensure_rendered(c, verdict):
+            await self._notify_status(c)
             return
-        if self.cfg.dry_run:
-            await self._dry_run(c, verdict, caption, now)
-            return
+        publishers = self.enabled_publishers()
         results, errors = [], []
         url = ""
-        if any(getattr(p, "needs_public_url", False) for p in self.publishers):
+        if any(getattr(p, "needs_public_url", False) for p in publishers):
             try:
                 url = await self.media.expose(c.vertical_path)
             except Exception as e:
                 errors.append(f"url pública: {e}")
         job = PublishJob(Path(c.vertical_path), url, caption, verdict.title)
-        for p in self.publishers:
+        for p in publishers:
             if getattr(p, "needs_public_url", False) and not url:
                 continue
             try:
@@ -119,12 +109,22 @@ class Scheduler:
             await self.notifier.post_published(c, verdict, results, errors)
         else:
             await self._on_total_failure(c, now, errors)
+        await self._notify_status(c)
+
+    async def _notify_status(self, c: Candidate) -> None:
+        if self.on_status is None:
+            return
+        try:
+            await self.on_status(c)
+        except Exception as e:  # o card do Discord não pode travar a publicação
+            log.warning("status do clipe %s não atualizado: %s", c.id, e)
 
     def _on_success(self, c: Candidate, now: datetime) -> None:
         self.fail_streak = 0
         self.retry_at = None
         self.attempts.pop(c.id, None)
         c.state = State.PUBLISHED
+        c.priority = 0
         if not self.db.kv_get("first_post_day"):
             self.db.kv_set("first_post_day", local_day(now).isoformat())
         self.db.update(c)
@@ -146,11 +146,12 @@ class Scheduler:
             f"Nenhuma plataforma aceitou o post. Publicações em espera; "
             f"tentando de novo em {wait} min. Erro: {reason}")
 
-    async def _render_final(self, c: Candidate, verdict: Verdict) -> bool:
+    async def ensure_rendered(self, c: Candidate, verdict: Verdict) -> bool:
         """Render final só dos aprovados: tela dividida (webcam em cima, jogo embaixo),
         legenda na emenda e título-gancho animado. Falhando, o clipe vai para `failed`."""
-        if c.vertical_path and Path(c.vertical_path).name == "final.mp4"                 and Path(c.vertical_path).exists():
-            return True  # já renderizado (nova tentativa de publicação)
+        if (c.vertical_path and Path(c.vertical_path).name == "final.mp4"
+                and Path(c.vertical_path).exists()):
+            return True  # já renderizado (nova tentativa ou card já postado)
         raw = Path(c.raw_path) if c.raw_path else None
         if raw is None or not raw.exists():
             if c.vertical_path and Path(c.vertical_path).exists():
@@ -170,19 +171,6 @@ class Scheduler:
             return False
         self.db.update(c)
         return True
-
-    async def _dry_run(self, c: Candidate, verdict: Verdict, caption: str,
-                       now: datetime) -> None:
-        preview = Path(c.vertical_path).with_name("preview.mp4")
-        try:
-            await self.preview_fn(Path(c.vertical_path), preview)
-        except Exception as e:
-            log.warning("prévia falhou: %s", e)
-            preview = Path(c.vertical_path)
-        self.db.record_publication(c.id, "dry_run", "", "", now)
-        c.state = State.PUBLISHED
-        self.db.update(c)
-        await self.notifier.dry_run_preview(c, verdict, caption, preview)
 
     async def run(self) -> None:
         while True:

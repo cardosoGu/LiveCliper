@@ -13,11 +13,12 @@ from ..core.db import DB
 from ..core.credits import credit_text
 from ..core.models import State
 from ..core.timeutil import local_day, local_midnight_utc, utcnow
+from .runtime import PLATFORMS, RuntimeSettings
 
 log = logging.getLogger(__name__)
 
 HELP = ("Comandos: /pause · /resume · /status · /testar [canal] · /block canal · "
-        "/unblock canal · /min_score N")
+        "/unblock canal · /min_score N · /plataforma nome on|off")
 OUTBOX_MAX = 200
 
 
@@ -38,6 +39,7 @@ class LogTransport:
 
 class Monitor:
     def __init__(self, db: DB, transport: Transport, publishers_by_name: dict, cfg: Settings,
+                 runtime: RuntimeSettings | None = None,
                  channel_count: Callable[[], int] = lambda: 0, now_fn=utcnow,
                  chat_summary: Callable[[], str] = lambda: "",
                  clock: Callable[[], float] = time.monotonic):
@@ -45,6 +47,7 @@ class Monitor:
         self.transport = transport
         self.publishers = publishers_by_name
         self.cfg = cfg
+        self.runtime = runtime or RuntimeSettings(db, cfg)
         self.channel_count = channel_count
         self.chat_summary = chat_summary
         self.tester = None  # ManualTester, ligado no main depois que o pipeline existe
@@ -125,11 +128,6 @@ class Monitor:
         buttons = [("🗑️ Apagar post", f"del:{c.id}"), ("🚫 Bloquear canal", f"block:{c.channel}")]
         await self._send("\n".join(lines), buttons if results else None)
 
-    async def dry_run_preview(self, c, verdict, caption, preview_path) -> None:
-        text = (f"🧪 **ENSAIO (nada foi publicado)** — nota {c.ai_score:.1f} · "
-                f"{credit_text(c.platform, c.channel)}\n{verdict.reason}\n\n{caption}")
-        self._enqueue(("file", str(preview_path), text))
-
     def status_text(self) -> str:
         now = self.now_fn()
         day = local_day(now).isoformat()
@@ -140,8 +138,8 @@ class Monitor:
         spend = float(self.db.kv_get(f"claude_spend:{day}", "0") or 0)
         evals = int(float(self.db.kv_get(f"ai_evals:{day}", "0") or 0))
         return "\n".join([
-            f"**Status:** {'⏸️ pausado' if paused else '▶️ ativo'}"
-            + (" · 🧪 modo ensaio" if self.cfg.dry_run else ""),
+            f"**Status:** {'⏸️ pausado' if paused else '▶️ ativo'}",
+            f"Plataformas: {', '.join(p for p in PLATFORMS if self.runtime.platform_enabled(p)) or 'nenhuma ligada'}",
             f"Lives monitoradas: {self.channel_count()}",
             *([s] if (s := self.chat_summary()) else []),
             f"Última hora: {last_hour}",
@@ -180,6 +178,13 @@ class Monitor:
                 return "A nota precisa estar entre 0 e 10."
             self.db.kv_set("min_score", str(value))
             return f"🎯 Nota mínima agora: {value}"
+        if name == "plataforma":
+            plat, _, state = (arg or "").lower().partition(" ")
+            if plat not in PLATFORMS or state.strip() not in ("on", "off"):
+                return f"Uso: /plataforma {'|'.join(PLATFORMS)} on|off"
+            on = state.strip() == "on"
+            self.runtime.set_platform(plat, on)
+            return f"{'🟢' if on else '⚪'} {plat} {'ligado' if on else 'desligado'}."
         return HELP
 
     async def handle_action(self, custom_id: str) -> str:
