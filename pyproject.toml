@@ -15,6 +15,7 @@ dependencies = [
     "faster-whisper>=1.0",
     "yt-dlp",
     "tzdata",
+    "numpy",
 ]
 
 [dependency-groups]

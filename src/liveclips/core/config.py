@@ -66,6 +66,7 @@ class Settings:
     post_max_per_day_step: int
     post_max_per_day_cap: int
     queue_ttl_min: int
+    ondemand_max_hours: float
 
     @property
     def discord_channel_ids(self) -> dict[str, int]:
@@ -162,4 +163,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         post_max_per_day_step=i("POST_MAX_PER_DAY_STEP", 2),
         post_max_per_day_cap=i("POST_MAX_PER_DAY_CAP", 20),
         queue_ttl_min=i("QUEUE_TTL_MIN", 90),
+        ondemand_max_hours=f("ONDEMAND_MAX_HOURS", 4.0),
     )

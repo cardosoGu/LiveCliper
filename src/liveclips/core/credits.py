@@ -7,5 +7,9 @@ _SAFE = re.compile(r"[^A-Za-z0-9_.\-]")
 
 
 def credit_text(platform: str, channel: str) -> str:
-    host = "twitch.tv" if platform == "twitch" else "kick.com"
-    return f"{host}/{_SAFE.sub('', channel)}"
+    name = _SAFE.sub("", channel)
+    if platform == "twitch":
+        return f"twitch.tv/{name}"
+    if platform == "youtube":
+        return f"youtube.com/@{name}"
+    return f"kick.com/{name}"

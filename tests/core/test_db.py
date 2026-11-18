@@ -117,3 +117,25 @@ def test_dry_run_publications_do_not_count(db):
     db.record_publication(cid, "instagram", "y", "u", at)
     assert db.publications_count_since(since) == 1
     assert db.last_publication() is not None
+
+
+def test_ondemand_fields_roundtrip(db):
+    c = make_candidate(source="ondemand", job_id=3, start_s=12.5, end_s=60.0)
+    db.insert_candidate(c)
+    got = db.get(c.id)
+    assert (got.job_id, got.start_s, got.end_s) == (3, 12.5, 60.0)
+    assert [x.id for x in db.job_candidates(3)] == [c.id]
+
+
+def test_jobs_queue(db):
+    a = db.create_job("https://youtu.be/a", "foca no convidado", 10, 20)
+    b = db.create_job("https://youtu.be/b", "", None, None)
+    assert db.get_job(a)["state"] == "queued" and db.get_job(a)["instructions"] == "foca no convidado"
+    assert db.next_job()["id"] == a
+    db.update_job(a, state="running", step="audio", progress="baixando áudio…")
+    assert db.next_job()["id"] == b
+    assert [j["id"] for j in db.jobs_in(["running"])] == [a]
+    assert db.reset_running_jobs() == 1 and db.get_job(a)["state"] == "queued"
+    import pytest
+    with pytest.raises(ValueError):
+        db.update_job(a, url="x")  # campo não permitido

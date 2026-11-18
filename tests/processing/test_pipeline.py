@@ -151,3 +151,14 @@ async def test_manual_test_clip_never_awaits_approval(db, tmp_path):
     got = db.get(c.id)
     assert got.state is State.TESTED and got.ai_score == 8.0
     assert db.by_state(State.AWAITING_APPROVAL) == []
+
+
+async def test_ondemand_candidate_never_expires(db, tmp_path):
+    from datetime import timedelta
+    p, c = make_pipeline(db, tmp_path, verdict(8.0))
+    c.source = "ondemand"
+    db.update(c)
+    later = c.created_at + timedelta(days=2)
+    p.now_fn = lambda: later
+    await p.tick()
+    assert db.get(c.id).state is not State.EXPIRED

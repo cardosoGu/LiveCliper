@@ -72,7 +72,7 @@ class Pipeline:
         detected = self.db.by_state(State.DETECTED, 500)
         live = []
         for c in detected:
-            if is_expired(c, now, self.cfg.queue_ttl_min):
+            if c.source != "ondemand" and is_expired(c, now, self.cfg.queue_ttl_min):
                 self._set(c, State.EXPIRED, "passou do prazo antes de processar")
             elif c.rank < self.cfg.rank_threshold:
                 self._set(c, State.REJECTED_RANK, f"rank {c.rank:.1f} abaixo do limiar")

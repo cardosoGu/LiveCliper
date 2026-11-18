@@ -50,6 +50,9 @@ class Candidate:
     updated_at: datetime = field(default_factory=utcnow)
     approval_message_id: int | None = None  # mensagem do card no #aprovação
     priority: int = 0  # 1 = "⚡ Agora": fura o intervalo entre posts
+    job_id: int | None = None  # pedido sob demanda que gerou o corte
+    start_s: float | None = None  # posição do corte no vídeo original
+    end_s: float | None = None
 
 
 def is_expired(c: Candidate, now: datetime, ttl_min: int) -> bool:

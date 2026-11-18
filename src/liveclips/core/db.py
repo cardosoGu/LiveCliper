@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS candidates (
   view_count INTEGER NOT NULL, spike_score REAL NOT NULL, rank REAL NOT NULL,
   state TEXT NOT NULL, raw_path TEXT, vertical_path TEXT, transcript TEXT,
   ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL,
-  extra_clip_url TEXT, approval_message_id INTEGER, priority INTEGER NOT NULL DEFAULT 0
+  extra_clip_url TEXT, approval_message_id INTEGER, priority INTEGER NOT NULL DEFAULT 0,
+  job_id INTEGER, start_s REAL, end_s REAL
 );
 CREATE INDEX IF NOT EXISTS idx_cand_state ON candidates(state);
 CREATE INDEX IF NOT EXISTS idx_cand_channel ON candidates(channel, created_at);
@@ -30,6 +31,14 @@ CREATE TABLE IF NOT EXISTS blocklist (
   channel TEXT PRIMARY KEY, reason TEXT, added_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL, step TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '', channel_id INTEGER, message_id INTEGER,
+  thread_id INTEGER, status_message_id INTEGER, error TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
 """
 
 _COLS = [
@@ -37,6 +46,7 @@ _COLS = [
     "duration", "title", "viewers", "view_count", "spike_score", "rank",
     "state", "raw_path", "vertical_path", "transcript", "ai_score", "ai_json",
     "reason", "updated_at", "extra_clip_url", "approval_message_id", "priority",
+    "job_id", "start_s", "end_s",
 ]
 
 
@@ -74,6 +84,9 @@ class DB:
         "extra_clip_url": "TEXT",
         "approval_message_id": "INTEGER",
         "priority": "INTEGER NOT NULL DEFAULT 0",
+        "job_id": "INTEGER",
+        "start_s": "REAL",
+        "end_s": "REAL",
     }
 
     def _migrate(self) -> None:
@@ -81,6 +94,7 @@ class DB:
         for name, decl in self._NEW_COLUMNS.items():
             if name not in cols:
                 self.conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {decl}")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_cand_job ON candidates(job_id)")
         self.conn.commit()
 
     # --- candidatos -------------------------------------------------------
@@ -160,6 +174,54 @@ class DB:
             (since.isoformat(),),
         ).fetchall()
         return {r["state"]: r["n"] for r in rows}
+
+    # --- jobs sob demanda -------------------------------------------------
+    _JOB_FIELDS = {"state", "step", "progress", "title", "thread_id", "status_message_id",
+                   "error"}
+
+    def create_job(self, url: str, instructions: str, channel_id: int | None,
+                   message_id: int | None) -> int:
+        now = utcnow().isoformat()
+        cur = self.conn.execute(
+            "INSERT INTO jobs (url, instructions, state, channel_id, message_id, created_at,"
+            " updated_at) VALUES (?,?,?,?,?,?,?)",
+            (url, instructions, "queued", channel_id, message_id, now, now))
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_job(self, job_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_job(self, job_id: int, **fields) -> None:
+        bad = set(fields) - self._JOB_FIELDS
+        if bad:
+            raise ValueError(f"campos inválidos: {bad}")
+        fields["updated_at"] = utcnow().isoformat()
+        sets = ",".join(f"{k}=?" for k in fields)
+        self.conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", [*fields.values(), job_id])
+        self.conn.commit()
+
+    def next_job(self) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM jobs WHERE state='queued' ORDER BY id LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def jobs_in(self, states: list[str]) -> list[dict]:
+        marks = ",".join("?" * len(states))
+        rows = self.conn.execute(
+            f"SELECT * FROM jobs WHERE state IN ({marks}) ORDER BY id", states).fetchall()
+        return [dict(r) for r in rows]
+
+    def reset_running_jobs(self) -> int:
+        cur = self.conn.execute("UPDATE jobs SET state='queued' WHERE state='running'")
+        self.conn.commit()
+        return cur.rowcount
+
+    def job_candidates(self, job_id: int) -> list[Candidate]:
+        rows = self.conn.execute(
+            "SELECT * FROM candidates WHERE job_id=? ORDER BY id", (job_id,)).fetchall()
+        return [_from_row(r) for r in rows]
 
     # --- publicações ------------------------------------------------------
     def record_publication(self, candidate_id: int, platform: str, post_id: str,

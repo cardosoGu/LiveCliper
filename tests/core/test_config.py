@@ -58,3 +58,8 @@ def test_discord_channel_ids_only_lists_the_ones_set():
     s = load_settings({"DISCORD_CHANNEL_ID": "1", "DISCORD_APPROVAL_CHANNEL_ID": "2",
                        "DISCORD_LINKS_CHANNEL_ID": "3"})
     assert s.discord_channel_ids == {"logs": 1, "aprovação": 2, "gerar-clipes": 3}
+
+
+def test_ondemand_max_hours():
+    assert load_settings({}).ondemand_max_hours == 4.0
+    assert load_settings({"ONDEMAND_MAX_HOURS": "2.5"}).ondemand_max_hours == 2.5
