@@ -225,3 +225,45 @@ async def test_retry_only_for_published_clips(db, tmp_path):
     desk, t, _ = make_desk(db, tmp_path)
     c = awaiting(db)
     assert "não foi publicado" in await desk.handle("retry-tiktok", c.id)
+
+
+def _published_with_failure(db, desk):
+    c = awaiting(db)
+    got = db.get(c.id)
+    got.state, got.reason = State.PUBLISHED, "tiktok: token vencido"
+    db.update(got)
+    return c
+
+
+async def test_retry_for_platform_not_failed_is_refused(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    calls = []
+
+    async def retry(c, platform):
+        calls.append(platform)
+        return "ok"
+
+    desk.retry = retry
+    c = _published_with_failure(db, desk)
+    assert "não está com falha" in await desk.handle("retry-instagram", c.id)
+    assert calls == []
+
+
+async def test_concurrent_retry_is_refused(db, tmp_path):
+    import asyncio
+    desk, t, _ = make_desk(db, tmp_path)
+    gate, calls = asyncio.Event(), []
+
+    async def retry(c, platform):
+        calls.append(platform)
+        await gate.wait()
+        return "ok"
+
+    desk.retry = retry
+    c = _published_with_failure(db, desk)
+    first = asyncio.create_task(desk.handle("retry-tiktok", c.id))
+    await asyncio.sleep(0)
+    assert "já em andamento" in await desk.handle("retry-tiktok", c.id)
+    gate.set()
+    assert await first == "ok"
+    assert calls == ["tiktok"]

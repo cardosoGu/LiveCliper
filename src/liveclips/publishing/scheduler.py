@@ -118,8 +118,12 @@ class Scheduler:
         if pub is None:
             return f"{platform} não configurado no .env."
         verdict = Verdict.model_validate_json(c.ai_json)
+        state, reason = c.state, c.reason
         if not await self.ensure_rendered(c, verdict):
-            return f"💥 vídeo indisponível: {c.reason}"
+            why = c.reason
+            c.state, c.reason = state, reason  # não rebaixa o clipe já publicado
+            self.db.update(c)
+            return f"💥 vídeo indisponível para reenviar: {why}"
         now = self.now_fn()
         try:
             url = (await self.media.expose(c.vertical_path)

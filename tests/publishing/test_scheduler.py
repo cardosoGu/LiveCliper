@@ -280,3 +280,14 @@ async def test_retry_failure_is_reported(db, tmp_path):
     msg = await s.publish_to(db.get(c.id), "tiktok")
     assert "caiu" in msg and db.get(c.id).reason.startswith("tiktok:")
     assert "não configurad" in await s.publish_to(db.get(c.id), "youtube")
+
+
+async def test_retry_with_missing_video_keeps_published_state_and_reason(db, tmp_path):
+    s, c, n, now = setup(db, tmp_path, [Pub("instagram"), Pub("tiktok")])
+    c.state, c.reason = State.PUBLISHED, "tiktok: token vencido"
+    c.vertical_path, c.raw_path = str(tmp_path / "sumiu.mp4"), None
+    db.update(c)
+    msg = await s.publish_to(db.get(c.id), "tiktok")
+    assert "indisponível" in msg
+    got = db.get(c.id)
+    assert got.state is State.PUBLISHED and got.reason == "tiktok: token vencido"

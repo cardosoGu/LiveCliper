@@ -71,6 +71,7 @@ class ApprovalDesk:
         self.limit_bytes = int(upload_limit_mb * 1024 * 1024)
         self.now_fn = now_fn
         self.retry = retry
+        self._retrying: set[tuple[int, str]] = set()
         self._age_shown: dict[int, int] = {}
 
     # --- cards ------------------------------------------------------------
@@ -165,7 +166,16 @@ class ApprovalDesk:
             platform = action.removeprefix("retry-")
             if c.state is not State.PUBLISHED or self.retry is None:
                 return "Esse clipe não foi publicado ainda."
-            return await self.retry(c, platform)
+            if platform not in self.failed_platforms(c):
+                return "Essa plataforma não está com falha."
+            key = (c.id, platform)
+            if key in self._retrying:
+                return "Reenvio já em andamento."
+            self._retrying.add(key)
+            try:
+                return await self.retry(c, platform)
+            finally:
+                self._retrying.discard(key)
         if c.state is not State.AWAITING_APPROVAL:
             return f"Esse clipe já foi decidido ({c.state.value})."
         if action in ("approve", "now"):
