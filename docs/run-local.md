@@ -13,7 +13,7 @@ Abra o `.env` e preencha as chaves. O mínimo para o **modo ensaio** é:
 - `GEMINI_API_KEY` (e/ou `ANTHROPIC_API_KEY`) e `GROQ_API_KEY`
 - `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ADMIN_USER_ID`
 
-Mantenha `DRY_RUN=1` até terminar o ensaio.
+Nota: as plataformas ligadas são controladas pelo `/plataforma` no Discord; `DRY_RUN=1` só faz todas começarem desligadas.
 
 ## 3. Subir
 ```bash
@@ -66,7 +66,7 @@ Parar: `docker compose down`. Banco e vídeos ficam em `./data` e sobrevivem a r
 Ficam em `off` até as auditorias saírem. Depois, configure as chaves e mude o modo para `public`.
 
 ## 5. Ensaio (GTA V) e calibração
-1. Com `DRY_RUN=1` e `TWITCH_GAME_NAME=Grand Theft Auto V`, deixe rodando 1–2 h em horário de pico.
+1. Com `DRY_RUN=1` (todas as plataformas começam desligadas) e `TWITCH_GAME_NAME=Grand Theft Auto V`, deixe rodando 1–2 h em horário de pico.
 2. Veja no Discord as prévias que *seriam* publicadas. Ajuste `SPIKE_*`, `RANK_THRESHOLD` e a nota (`/min_score`).
 3. Calibre a IA com ~30 clipes rotulados (inclua spoiler, conteúdo impróprio, inglês e clipes chatos):
    ```bash
@@ -75,6 +75,6 @@ Ficam em `off` até as auditorias saírem. Depois, configure as chaves e mude o 
    O objetivo é **zero falsos "publicar"**.
 
 ## 6. Lançamento
-- Teste 1 publicação real: `DRY_RUN=0`, `docker compose up -d`, espere 1 post e apague pelo botão 🗑️ no Discord.
-- Quarta ~23:30: `TWITCH_GAME_NAME=Grand Theft Auto VI`, `DRY_RUN=0`, `docker compose up -d`, e confira `/status`.
+- Teste 1 publicação real: ligue a plataforma com `/plataforma` no Discord (`DRY_RUN=0`), `docker compose up -d`, espere 1 post e apague pelo botão 🗑️ no Discord.
+- Quarta ~23:30: `TWITCH_GAME_NAME=Grand Theft Auto VI`, plataformas ligadas via `/plataforma`, `docker compose up -d`, e confira `/status`.
 - Emergência: `/pause` no Discord.

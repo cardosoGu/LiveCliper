@@ -16,6 +16,7 @@ from .capture.twitch.chat import ChatMonitor
 from .capture.twitch.clipper import Clipper, TokenBucket
 from .capture.twitch.discovery import discovery_loop
 from .capture.twitch.public_clips import collect_twitch_public
+from .control.approval import ApprovalDesk, LogApprovalTransport
 from .control.manual_test import ManualTester
 from .control.monitor import LogTransport, Monitor
 from .control.runtime import RuntimeSettings
@@ -23,6 +24,7 @@ from .core.config import Settings, load_settings
 from .core.db import DB
 from .core.supervisor import supervise
 from .processing.cleanup import cleanup_loop
+from .processing.ffmpeg import make_preview
 from .processing.pipeline import Pipeline
 from .publishing.media_server import MediaServer
 from .publishing.platforms import build_publishers
@@ -66,7 +68,7 @@ async def amain() -> None:
             from .control.discord_bot import DiscordBot
 
             bot = DiscordBot(cfg.discord_bot_token, cfg.discord_channel_id,
-                             cfg.discord_admin_user_id)
+                             cfg.discord_admin_user_id, db)
             transport = bot
         else:
             log.warning("Discord não configurado: avisos vão só para o log")
@@ -104,6 +106,18 @@ async def amain() -> None:
         monitor.tester = ManualTester(twitch, db, pipeline, chat,
                                       followup_delay_s=cfg.clip_followup_s)
         scheduler = Scheduler(db, cfg, publishers, media_server, monitor, runtime)
+        if bot is not None:
+            from .control.discord_bot import DiscordApprovalTransport
+
+            approval_transport = DiscordApprovalTransport(bot)
+        else:
+            approval_transport = LogApprovalTransport()
+        desk = ApprovalDesk(db, runtime, approval_transport, scheduler.ensure_rendered,
+                            make_preview, media_server.expose,
+                            [p.name for p in publishers], cfg.discord_upload_limit_mb)
+        scheduler.on_status = desk.on_status
+        if bot is not None:
+            bot.attach_desk(desk)
 
         await media_server.start()
         jobs = {
@@ -118,6 +132,7 @@ async def amain() -> None:
                 180, "twitch_clips"),
             "pipeline": pipeline.run,
             "scheduler": scheduler.run,
+            "approval": desk.run,
             "notifier": monitor.run_sender,
             "cleanup": lambda: cleanup_loop(media_dir),
         }
