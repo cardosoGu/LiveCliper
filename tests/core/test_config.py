@@ -52,3 +52,9 @@ def test_tiktok_accepts_draft_but_youtube_does_not():
     assert load_settings({"TIKTOK_MODE": "draft"}).tiktok_mode == "draft"
     with pytest.raises(ValueError):
         load_settings({"YT_MODE": "draft"})
+
+
+def test_discord_channel_ids_only_lists_the_ones_set():
+    s = load_settings({"DISCORD_CHANNEL_ID": "1", "DISCORD_APPROVAL_CHANNEL_ID": "2",
+                       "DISCORD_LINKS_CHANNEL_ID": "3"})
+    assert s.discord_channel_ids == {"logs": 1, "aprovação": 2, "gerar-clipes": 3}

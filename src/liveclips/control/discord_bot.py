@@ -19,7 +19,9 @@ log = logging.getLogger(__name__)
 
 
 class DiscordBot:
-    def __init__(self, token: str, channel_id: int, admin_user_id: int, db: DB):
+    def __init__(self, token: str, channel_id: int, admin_user_id: int, db: DB,
+                 channel_ids: dict[str, int] | None = None):
+        self.channel_ids = channel_ids or {}
         self.token = token
         self.channel_id = channel_id
         self.admin_user_id = admin_user_id
@@ -73,7 +75,7 @@ class DiscordBot:
             guild = getattr(configured, "guild", None)
             if guild is not None:
                 try:
-                    self.channels = await ensure_channels(guild, self.db)
+                    self.channels = await ensure_channels(guild, self.db, self.channel_ids)
                     self._channel = self.channels["logs"]  # avisos vão para o #logs
                 except discord.Forbidden:
                     log.warning("sem permissão para criar canais: tudo fica em #%s",

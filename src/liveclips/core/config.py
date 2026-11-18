@@ -36,6 +36,9 @@ class Settings:
     discord_channel_id: int
     discord_admin_user_id: int
     discord_upload_limit_mb: float
+    discord_approval_channel_id: int
+    discord_panel_channel_id: int
+    discord_links_channel_id: int
     # plataformas
     ig_user_id: str
     ig_access_token: str
@@ -63,6 +66,15 @@ class Settings:
     post_max_per_day_step: int
     post_max_per_day_cap: int
     queue_ttl_min: int
+
+    @property
+    def discord_channel_ids(self) -> dict[str, int]:
+        """Canais informados por ID no .env (os que faltarem o bot cria)."""
+        ids = {"logs": self.discord_channel_id,
+               "aprovação": self.discord_approval_channel_id,
+               "painel": self.discord_panel_channel_id,
+               "gerar-clipes": self.discord_links_channel_id}
+        return {name: cid for name, cid in ids.items() if cid}
 
     @property
     def twitch_game_names(self) -> list[str]:
@@ -122,6 +134,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         discord_channel_id=i("DISCORD_CHANNEL_ID", 0),
         discord_admin_user_id=i("DISCORD_ADMIN_USER_ID", 0),
         discord_upload_limit_mb=f("DISCORD_UPLOAD_LIMIT_MB", 10.0),
+        discord_approval_channel_id=i("DISCORD_APPROVAL_CHANNEL_ID", 0),
+        discord_panel_channel_id=i("DISCORD_PANEL_CHANNEL_ID", 0),
+        discord_links_channel_id=i("DISCORD_LINKS_CHANNEL_ID", 0),
         ig_user_id=s("IG_USER_ID"),
         ig_access_token=s("IG_ACCESS_TOKEN"),
         ig_graph_version=s("IG_GRAPH_VERSION", "v23.0"),

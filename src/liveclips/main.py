@@ -68,7 +68,7 @@ async def amain() -> None:
             from .control.discord_bot import DiscordBot
 
             bot = DiscordBot(cfg.discord_bot_token, cfg.discord_channel_id,
-                             cfg.discord_admin_user_id, db)
+                             cfg.discord_admin_user_id, db, cfg.discord_channel_ids)
             transport = bot
         else:
             log.warning("Discord não configurado: avisos vão só para o log")

@@ -48,3 +48,22 @@ async def test_recreates_deleted_channel_in_existing_category(db):
     again = await ensure_channels(g, db)
     assert again["logs"].id != first["logs"].id
     assert len(g.categories) == 1
+
+
+async def test_uses_channels_given_by_id_without_creating(db):
+    g = FakeGuild()
+    for cid, name in ((11, "aprovacao-clipes"), (12, "realtime"), (13, "links"), (14, "logs")):
+        g.channels[cid] = FakeChannel(cid, name)
+    preset = {"aprovação": 11, "painel": 12, "gerar-clipes": 13, "logs": 14}
+    found = await ensure_channels(g, db, preset)
+    assert {k: v.id for k, v in found.items()} == preset
+    assert g.categories == [] and len(g.channels) == 4  # nada foi criado
+    assert db.kv_get("discord_channel:aprovação") == "11"
+
+
+async def test_preset_id_that_does_not_exist_falls_back_to_creating(db):
+    g = FakeGuild()
+    g.channels[14] = FakeChannel(14, "logs")
+    found = await ensure_channels(g, db, {"logs": 14, "aprovação": 999})
+    assert found["logs"].id == 14
+    assert found["aprovação"].id not in (999, 14) and found["aprovação"].name == "aprovação"
