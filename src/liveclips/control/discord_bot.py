@@ -14,8 +14,52 @@ from ..core.models import State
 from .approval import ApprovalDesk, approval_custom_id, parse_custom_id
 from .channels import ensure_channels
 from .monitor import Monitor
+from .panel import (INTERVAL_OPTIONS, LIMIT_OPTIONS, PLATFORM_LABEL as PANEL_LABEL,
+                    SCORE_OPTIONS, VIEWER_OPTIONS, Panel, PanelState)
 
 log = logging.getLogger(__name__)
+
+
+def build_panel_view(s: PanelState) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        label=f"📡 Automático: {'LIGADO' if s.auto_on else 'DESLIGADO'}", custom_id="panel:auto",
+        style=discord.ButtonStyle.success if s.auto_on else discord.ButtonStyle.secondary, row=0))
+    view.add_item(discord.ui.Button(label="▶ Retomar" if s.paused else "⏸ Pausar",
+                                    custom_id="panel:pause", style=discord.ButtonStyle.secondary,
+                                    row=0))
+    view.add_item(discord.ui.Button(label="➕ Categoria", custom_id="panel:addcat",
+                                    style=discord.ButtonStyle.secondary, row=0))
+    view.add_item(discord.ui.Select(
+        custom_id="panel:cats", placeholder="Categorias do automático", row=1,
+        min_values=1, max_values=max(1, len(s.known)),
+        options=[discord.SelectOption(label=n[:100], value=n[:100], default=n in s.selected)
+                 for n in s.known]))
+    view.add_item(discord.ui.Select(
+        custom_id="panel:viewers", row=2,
+        options=[discord.SelectOption(label=f"mín. {v} espectadores", value=str(v),
+                                      default=v == s.min_viewers) for v in VIEWER_OPTIONS]))
+    view.add_item(discord.ui.Select(
+        custom_id="panel:score", row=3,
+        options=[discord.SelectOption(label=f"nota mínima {v}", value=str(v),
+                                      default=float(v) == s.min_score) for v in SCORE_OPTIONS]))
+    view.add_item(discord.ui.Select(
+        custom_id="panel:pace", row=4,
+        options=[discord.SelectOption(label=f"a cada {i} min · até {lim}/dia", value=f"{i}|{lim}",
+                                      default=(i, lim) == (s.interval, s.limit))
+                 for i in INTERVAL_OPTIONS for lim in LIMIT_OPTIONS]))
+    return view
+
+
+def build_platforms_view(s: PanelState) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for name, enabled, configured in s.platforms:
+        view.add_item(discord.ui.Button(
+            label=f"{PANEL_LABEL[name]} {'✅' if enabled and configured else '⚪'}",
+            custom_id=f"panel:plat-{name}", disabled=not configured,
+            style=discord.ButtonStyle.success if enabled and configured
+            else discord.ButtonStyle.secondary))
+    return view
 
 
 class DiscordBot:
@@ -31,6 +75,7 @@ class DiscordBot:
         self.db = db
         self.channels: dict = {}
         self.desk: ApprovalDesk | None = None
+        self.panel: Panel | None = None
         self._ready = asyncio.Event()
         self._channel: discord.abc.Messageable | None = None
         self.client.event(self.on_ready)
@@ -42,6 +87,43 @@ class DiscordBot:
 
     def attach_desk(self, desk: ApprovalDesk) -> None:
         self.desk = desk
+
+    def attach_panel(self, panel: Panel) -> None:
+        self.panel = panel
+
+    async def _panel_message(self, key: str, content: str, view: discord.ui.View) -> None:
+        channel = self.channels.get("painel")
+        if channel is None:
+            return
+        saved = self.db.kv_get(key)
+        if saved:
+            try:
+                msg = await channel.fetch_message(int(saved))
+                await msg.edit(content=content[:2000], view=view)
+                return
+            except discord.NotFound:
+                pass  # apagaram a mensagem: cria de novo
+        msg = await channel.send(content[:2000], view=view)
+        self.db.kv_set(key, str(msg.id))
+
+    async def refresh_panel(self) -> None:
+        if self.panel is None:
+            return
+        await asyncio.wait_for(self._ready.wait(), timeout=120)
+        s = self.panel.state()
+        await self._panel_message("panel:message_id", s.text, build_panel_view(s))
+        await self._panel_message("panel:platforms_message_id", "**Plataformas**",
+                                  build_platforms_view(s))
+
+    async def run_panel(self) -> None:
+        while True:
+            try:
+                await self.refresh_panel()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("painel não atualizado")
+            await asyncio.sleep(60)
 
     # --- transporte -------------------------------------------------------
     async def _get_channel(self):
@@ -101,6 +183,20 @@ class DiscordBot:
         if interaction.user.id != self.admin_user_id:
             await interaction.response.send_message("Só o admin pode usar isso.",
                                                     ephemeral=True)
+            return
+        if custom_id.startswith("panel:") and self.panel is not None:
+            action = custom_id.removeprefix("panel:")
+            if action == "addcat":
+                await interaction.response.send_modal(AddCategoryModal(self))
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            try:
+                msg = await self.panel.handle(action, list((interaction.data or {}).get("values", [])))
+                await self.refresh_panel()
+            except Exception as e:
+                log.exception("ação do painel %s falhou", action)
+                msg = f"Erro: {e}"
+            await interaction.followup.send(msg[:2000], ephemeral=True)
             return
         parsed = parse_custom_id(custom_id)
         if parsed is not None and self.desk is not None:
@@ -219,6 +315,25 @@ class EditModal(discord.ui.Modal, title="Editar clipe"):
         await interaction.followup.send(msg[:2000], ephemeral=True)
 
 
+class AddCategoryModal(discord.ui.Modal, title="Adicionar categoria"):
+    def __init__(self, bot: "DiscordBot"):
+        super().__init__(timeout=600)
+        self.bot = bot
+        self.name = discord.ui.TextInput(label="Nome exato da categoria na Twitch",
+                                         max_length=100, placeholder="Grand Theft Auto VI")
+        self.add_item(self.name)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            msg = await self.bot.panel.handle("addcat", [str(self.name.value)])
+            await self.bot.refresh_panel()
+        except Exception as e:
+            log.exception("adicionar categoria falhou")
+            msg = f"Erro: {e}"
+        await interaction.followup.send(msg[:2000], ephemeral=True)
+
+
 _BUTTONS = (("✅ Aprovar", "approve", discord.ButtonStyle.success),
             ("⚡ Agora", "now", discord.ButtonStyle.primary),
             ("✏️ Editar", "edit", discord.ButtonStyle.secondary),
@@ -240,6 +355,15 @@ class DiscordApprovalTransport:
                                             custom_id=approval_custom_id(action, candidate_id)))
         return view
 
+    @staticmethod
+    def _retry_view(candidate_id: int, platforms: tuple[str, ...]) -> discord.ui.View:
+        view = discord.ui.View(timeout=None)
+        for name in platforms:
+            view.add_item(discord.ui.Button(
+                label=f"🔁 {PANEL_LABEL.get(name, name)}", style=discord.ButtonStyle.secondary,
+                custom_id=approval_custom_id(f"retry-{name}", candidate_id)))
+        return view
+
     async def post(self, text, video, link, candidate_id, buttons):
         channel = await self.bot.approval_channel()
         body = (f"🔗 vídeo: {link}\n" if link else "") + text  # o link nunca é cortado
@@ -254,5 +378,10 @@ class DiscordApprovalTransport:
     async def edit(self, message_id, candidate_id, text, buttons, retry=()):
         channel = await self.bot.approval_channel()
         msg = await channel.fetch_message(message_id)
-        await msg.edit(content=text[:2000],
-                       view=self._view(candidate_id) if buttons else None)
+        if buttons:
+            view = self._view(candidate_id)
+        elif retry:
+            view = self._retry_view(candidate_id, retry)
+        else:
+            view = None
+        await msg.edit(content=text[:2000], view=view)
