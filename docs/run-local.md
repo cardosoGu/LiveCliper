@@ -8,7 +8,7 @@
 ```bash
 cp .env.example .env
 ```
-Abra o `.env` e preencha as chaves. O mínimo para o **modo ensaio** é:
+Abra o `.env` e preencha as chaves. O mínimo para rodar o fluxo de aprovação é:
 - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_REFRESH_TOKEN`
 - `GEMINI_API_KEY` (e/ou `ANTHROPIC_API_KEY`) e `GROQ_API_KEY`
 - `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ADMIN_USER_ID`
@@ -64,10 +64,11 @@ Parar: `docker compose down`. Banco e vídeos ficam em `./data` e sobrevivem a r
 
 ### TikTok / YouTube
 Ficam em `off` até as auditorias saírem. Depois, configure as chaves e mude o modo para `public`.
+O TikTok também aceita `TIKTOK_MODE=draft`: o vídeo vai como rascunho no app do TikTok (precisa do scope `video.upload`).
 
-## 5. Ensaio (GTA V) e calibração
+## 5. Aprovação (GTA V) e calibração
 1. Com `DRY_RUN=1` (todas as plataformas começam desligadas) e `TWITCH_GAME_NAME=Grand Theft Auto V`, deixe rodando 1–2 h em horário de pico.
-2. Veja no Discord as prévias que *seriam* publicadas. Ajuste `SPIKE_*`, `RANK_THRESHOLD` e a nota (`/min_score`).
+2. Veja os cards no canal #aprovação (aprovar, ⚡ agora, editar ou descartar) e ligue as plataformas com `/plataforma`; só o que você aprova é publicado. Ajuste `SPIKE_*`, `RANK_THRESHOLD` e a nota (`/min_score`).
 3. Calibre a IA com ~30 clipes rotulados (inclua spoiler, conteúdo impróprio, inglês e clipes chatos):
    ```bash
    uv run --env-file .env python scripts/calibrate_ai.py ./calibracao ./calibracao/labels.csv

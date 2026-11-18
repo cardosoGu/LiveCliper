@@ -66,21 +66,31 @@ class DiscordBot:
 
     # --- eventos ----------------------------------------------------------
     async def on_ready(self) -> None:
-        configured = self.client.get_channel(self.channel_id) or             await self.client.fetch_channel(self.channel_id)
-        self._channel = configured
-        guild = getattr(configured, "guild", None)
-        if guild is not None:
-            try:
-                self.channels = await ensure_channels(guild, self.db)
-                self._channel = self.channels["logs"]  # avisos vão para o #logs
-            except discord.Forbidden:
-                log.warning("sem permissão para criar canais: tudo fica em #%s",
-                            getattr(configured, "name", self.channel_id))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        log.info("Discord conectado como %s; canais: %s", self.client.user,
-                 ", ".join(self.channels) or getattr(configured, "name", self.channel_id))
-        self._ready.set()
+        try:
+            configured = (self.client.get_channel(self.channel_id)
+                          or await self.client.fetch_channel(self.channel_id))
+            self._channel = configured
+            guild = getattr(configured, "guild", None)
+            if guild is not None:
+                try:
+                    self.channels = await ensure_channels(guild, self.db)
+                    self._channel = self.channels["logs"]  # avisos vão para o #logs
+                except discord.Forbidden:
+                    log.warning("sem permissão para criar canais: tudo fica em #%s",
+                                getattr(configured, "name", self.channel_id))
+                except discord.HTTPException as e:
+                    log.error("falha ao criar os canais: %s", e)
+                try:
+                    self.tree.copy_global_to(guild=guild)
+                    await self.tree.sync(guild=guild)
+                except discord.HTTPException as e:
+                    log.error("falha ao sincronizar os comandos: %s", e)
+            log.info("Discord conectado como %s; canais: %s", self.client.user,
+                     ", ".join(self.channels) or getattr(configured, "name", self.channel_id))
+        except Exception:
+            log.exception("on_ready falhou")
+        finally:
+            self._ready.set()  # nunca deixa cards e avisos esperando 120 s
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         if interaction.type is not discord.InteractionType.component:
@@ -99,18 +109,31 @@ class DiscordBot:
                     await interaction.response.send_message(
                         "Esse clipe não está mais aguardando aprovação.", ephemeral=True)
                     return
-                v = Verdict.model_validate_json(c.ai_json)
-                await interaction.response.send_modal(EditModal(self.desk, cid, v.title,
-                                                                v.caption))
+                try:
+                    v = Verdict.model_validate_json(c.ai_json)
+                    await interaction.response.send_modal(
+                        EditModal(self.desk, cid, v.title, v.caption))
+                except Exception as e:
+                    log.exception("editar clipe %s falhou", cid)
+                    await interaction.response.send_message(f"Erro: {e}"[:2000],
+                                                            ephemeral=True)
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
-            await interaction.followup.send((await self.desk.handle(action, cid))[:2000],
-                                            ephemeral=True)
+            try:
+                result = await self.desk.handle(action, cid)
+            except Exception as e:
+                log.exception("ação %s do clipe %s falhou", action, cid)
+                result = f"Erro: {e}"
+            await interaction.followup.send(result[:2000], ephemeral=True)
             return
         if self.monitor is None:
             return
         await interaction.response.defer(thinking=True)
-        result = await self.monitor.handle_action(custom_id)
+        try:
+            result = await self.monitor.handle_action(custom_id)
+        except Exception as e:
+            log.exception("ação %s falhou", custom_id)
+            result = f"Erro: {e}"
         await interaction.followup.send(result[:2000])
 
     def _register_commands(self) -> None:
@@ -184,9 +207,14 @@ class EditModal(discord.ui.Modal, title="Editar clipe"):
         self.add_item(self.caption_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        msg = await self.desk.edit(self.candidate_id, str(self.hook.value),
-                                   str(self.caption_input.value))
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            msg = await self.desk.edit(self.candidate_id, str(self.hook.value),
+                                       str(self.caption_input.value))
+        except Exception as e:
+            log.exception("salvar edição do clipe %s falhou", self.candidate_id)
+            msg = f"Erro ao salvar: {e}"
+        await interaction.followup.send(msg[:2000], ephemeral=True)
 
 
 _BUTTONS = (("✅ Aprovar", "approve", discord.ButtonStyle.success),
@@ -212,7 +240,7 @@ class DiscordApprovalTransport:
 
     async def post(self, text, video, link, candidate_id, buttons):
         channel = await self.bot.approval_channel()
-        body = text + (f"\n🔗 vídeo: {link}" if link else "")
+        body = (f"🔗 vídeo: {link}\n" if link else "") + text  # o link nunca é cortado
         kwargs = {}
         if video is not None:
             kwargs["file"] = discord.File(str(video))
