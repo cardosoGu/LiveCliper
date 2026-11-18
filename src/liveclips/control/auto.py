@@ -64,6 +64,30 @@ class AutoController:
                 msg += f" · não encontradas na Twitch: {', '.join(self.missing)}"
             return msg
 
+    async def ensure_running(self, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+                             ) -> str | None:
+        """Insiste em ligar o automático enquanto ele estiver ligado no painel e parado
+        (Twitch fora do ar, categoria não encontrada...). Espera 30 s, 60 s... até 10 min.
+        Devolve a mensagem do apply que o ligou; None se já estava ligado ou desligado."""
+        delay, alerted = 30.0, False
+        while self.runtime.auto_on() and not self.running:
+            try:
+                msg = await self.apply()
+                if self.running:
+                    return msg
+                problem = msg
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.exception("automático não iniciou")
+                problem = f"Automático não iniciou: {e}"
+            if not alerted:  # um aviso por sequência de falhas
+                alerted = True
+                await self.alert(f"{problem} Vou tentar de novo sozinho.")
+            await sleep(delay)
+            delay = min(delay * 2, 600)
+        return None
+
     def status_line(self) -> str:
         if not self.running:
             return "📡 Automático: DESLIGADO"

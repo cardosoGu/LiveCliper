@@ -133,7 +133,8 @@ async def amain() -> None:
         def panel_status() -> list[str]:
             day = local_day(utcnow()).isoformat()
             evals = int(float(db.kv_get(f"ai_evals:{day}", "0") or 0))
-            waiting = len(db.awaiting_cards(posted=True, limit=1000)) +                 len(db.awaiting_cards(posted=False, limit=1000))
+            waiting = (len(db.awaiting_cards(posted=True, limit=1000))
+                       + len(db.awaiting_cards(posted=False, limit=1000)))
             posts = db.publications_count_since(local_midnight_utc(utcnow()))
             return [
                 f"🔎 Lives monitoradas: {len(chat.channels)}",
@@ -166,11 +167,16 @@ async def amain() -> None:
 
         plats = ", ".join(p.name for p in publishers) or "nenhuma"
         # Vai para a fila de avisos; o sender entrega quando o Discord estiver pronto.
-        try:
-            await monitor.info(await auto.apply())
-        except Exception as e:
-            log.exception("automático não iniciou")
-            await monitor.alert(f"Automático não iniciou: {e}")
+        async def auto_boot() -> None:
+            # Liga o automático no boot e o religa se ele ficar parado com o painel em
+            # LIGADO (ex.: Twitch fora do ar). Já ligado ou desligado, só confere de 5 em 5
+            # min (o supervise reinicia o job depois).
+            msg = await auto.ensure_running()
+            if msg:
+                await monitor.info(msg)
+            await asyncio.sleep(300)
+
+        jobs["auto_boot"] = auto_boot
         await monitor.info(f"🤖 **liveclips iniciado** · plataformas configuradas: {plats}")
         await asyncio.gather(*(supervise(n, f, monitor.alert) for n, f in jobs.items()))
 

@@ -60,3 +60,34 @@ async def test_no_category_found_does_not_start(db):
     auto, rt, started, _ = make(db, found={})
     msg = await auto.apply()
     assert not auto.running and "nenhuma categoria" in msg.lower()
+
+
+async def test_ensure_running_retries_until_twitch_answers(db):
+    auto, rt, started, _ = make(db)
+    real_resolve, calls, sleeps = auto.resolve, [], []
+
+    async def flaky(names):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionError("Twitch fora do ar")
+        return await real_resolve(names)
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    auto.resolve = flaky
+    msg = await auto.ensure_running(sleep=fake_sleep)
+    assert auto.running and "ligado" in msg.lower()
+    assert sleeps == [30] and len(calls) == 2
+    await auto.stop()
+
+
+async def test_ensure_running_returns_when_auto_is_off(db):
+    auto, rt, *_ = make(db)
+    rt.set_auto_on(False)
+
+    async def no_sleep(s):
+        raise AssertionError("não deveria esperar")
+
+    assert await auto.ensure_running(sleep=no_sleep) is None
+    assert not auto.running
