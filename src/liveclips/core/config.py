@@ -35,6 +35,7 @@ class Settings:
     discord_bot_token: str
     discord_channel_id: int
     discord_admin_user_id: int
+    discord_upload_limit_mb: float
     # plataformas
     ig_user_id: str
     ig_access_token: str
@@ -85,10 +86,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     def b(key: str, default: bool) -> bool:
         return s(key, "1" if default else "0").lower() in {"1", "true", "yes", "on"}
 
-    def mode(key: str) -> str:
+    def mode(key: str, allowed: tuple[str, ...] = ("off", "private", "public")) -> str:
         v = s(key, "off").lower()
-        if v not in {"off", "private", "public"}:
-            raise ValueError(f"{key} deve ser off, private ou public (recebido: {v})")
+        if v not in allowed:
+            raise ValueError(f"{key} deve ser {', '.join(allowed)} (recebido: {v})")
         return v
 
     # GEMINI_API_KEY e/ou GEMINI_API_KEY1, GEMINI_API_KEY2, ... em ordem de uso
@@ -120,10 +121,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         discord_bot_token=s("DISCORD_BOT_TOKEN"),
         discord_channel_id=i("DISCORD_CHANNEL_ID", 0),
         discord_admin_user_id=i("DISCORD_ADMIN_USER_ID", 0),
+        discord_upload_limit_mb=f("DISCORD_UPLOAD_LIMIT_MB", 10.0),
         ig_user_id=s("IG_USER_ID"),
         ig_access_token=s("IG_ACCESS_TOKEN"),
         ig_graph_version=s("IG_GRAPH_VERSION", "v23.0"),
-        tiktok_mode=mode("TIKTOK_MODE"),
+        tiktok_mode=mode("TIKTOK_MODE", ("off", "draft", "private", "public")),
         tiktok_client_key=s("TIKTOK_CLIENT_KEY"),
         tiktok_client_secret=s("TIKTOK_CLIENT_SECRET"),
         tiktok_refresh_token=s("TIKTOK_REFRESH_TOKEN"),
@@ -139,7 +141,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         clip_followup_s=f("CLIP_FOLLOWUP_S", 30.0),
         rank_threshold=f("RANK_THRESHOLD", 5.0),
         ai_daily_budget=i("AI_DAILY_BUDGET", 300),
-        ai_min_score=f("AI_MIN_SCORE", 8.0),
+        ai_min_score=f("AI_MIN_SCORE", 6.0),
         post_min_interval_min=i("POST_MIN_INTERVAL_MIN", 45),
         post_max_per_day=i("POST_MAX_PER_DAY", 8),
         post_max_per_day_step=i("POST_MAX_PER_DAY_STEP", 2),

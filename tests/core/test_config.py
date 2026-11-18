@@ -8,7 +8,8 @@ def test_defaults_when_env_empty():
     assert s.port == 8080
     assert s.data_dir == "/data"
     assert s.twitch_game_name == "Grand Theft Auto VI"
-    assert s.ai_min_score == 8.0
+    assert s.ai_min_score == 6.0
+    assert s.discord_upload_limit_mb == 10.0
     assert s.claude_model == "claude-opus-5-5"
     assert s.gemini_model == "gemini-3.5-flash,gemini-3.8-flash"
     assert s.tiktok_mode == "off" and s.yt_mode == "off"
@@ -45,3 +46,9 @@ def test_gemini_keys_in_order():
 def test_several_twitch_categories():
     s = load_settings({"TWITCH_GAME_NAME": "Just Chatting, Grand Theft Auto V ,,Minecraft"})
     assert s.twitch_game_names == ["Just Chatting", "Grand Theft Auto V", "Minecraft"]
+
+
+def test_tiktok_accepts_draft_but_youtube_does_not():
+    assert load_settings({"TIKTOK_MODE": "draft"}).tiktok_mode == "draft"
+    with pytest.raises(ValueError):
+        load_settings({"YT_MODE": "draft"})
