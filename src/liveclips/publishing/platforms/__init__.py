@@ -22,8 +22,9 @@ def build_publishers(cfg: Settings, db: DB, http: httpx.AsyncClient) -> list:
         pubs.append(TikTokPublisher(
             cfg.tiktok_client_key, cfg.tiktok_client_secret,
             db.kv_get("tiktok_refresh_token") or cfg.tiktok_refresh_token,
-            "SELF_ONLY" if cfg.tiktok_mode == "private" else "PUBLIC_TO_EVERYONE",
-            http, on_refresh=lambda t: db.kv_set("tiktok_refresh_token", t)))
+            "PUBLIC_TO_EVERYONE" if cfg.tiktok_mode == "public" else "SELF_ONLY",
+            http, on_refresh=lambda t: db.kv_set("tiktok_refresh_token", t),
+            draft=cfg.tiktok_mode == "draft"))
     if cfg.yt_mode != "off" and cfg.yt_client_id:
         pubs.append(YouTubePublisher(cfg.yt_client_id, cfg.yt_client_secret,
                                      cfg.yt_refresh_token, cfg.yt_mode))

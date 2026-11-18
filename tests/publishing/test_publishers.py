@@ -116,3 +116,31 @@ async def test_media_server_serves_and_expires(tmp_path):
         assert resp.status == 200 and await resp.read() == b"video"
         clock[0] += 61
         assert (await client.get(path)).status == 404
+
+
+@respx.mock
+async def test_tiktok_draft_goes_to_inbox(tmp_path):
+    respx.post(f"{TT}/oauth/token/").mock(return_value=httpx.Response(
+        200, json={"access_token": "a", "refresh_token": "r1"}))
+    inbox = respx.post(f"{TT}/post/publish/inbox/video/init/").mock(
+        return_value=httpx.Response(200, json={
+            "data": {"upload_url": "https://up.example/u", "publish_id": "p9"},
+            "error": {"code": "ok"}}))
+    direct = respx.post(f"{TT}/post/publish/video/init/")
+    respx.put("https://up.example/u").mock(return_value=httpx.Response(201))
+    respx.post(f"{TT}/post/publish/status/fetch/").mock(return_value=httpx.Response(
+        200, json={"data": {"status": "SEND_TO_USER_INBOX"}}))
+    async with httpx.AsyncClient() as http:
+        pub = TikTokPublisher("k", "s", "r1", "SELF_ONLY", http, None, nosleep, draft=True)
+        r = await pub.publish(job(tmp_path))
+    import json
+    body = json.loads(inbox.calls[0].request.content)
+    assert r.post_id == "p9" and "post_info" not in body
+    assert body["source_info"]["source"] == "FILE_UPLOAD"
+    assert not direct.called
+
+
+def test_build_publishers_tiktok_draft(db):
+    cfg = load_settings({"TIKTOK_MODE": "draft", "TIKTOK_CLIENT_KEY": "k"})
+    [tt] = build_publishers(cfg, db, None)
+    assert tt.name == "tiktok" and tt.draft is True

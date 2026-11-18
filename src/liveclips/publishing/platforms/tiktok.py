@@ -1,6 +1,7 @@
 """TikTok Content Posting API (Direct Post, upload de arquivo em 1 chunk).
 
 Sem auditoria do app, só `SELF_ONLY` (privado) funciona.
+Em rascunho (draft) o vídeo vai para a caixa de entrada do app do TikTok e o admin publica com um toque.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ class TikTokPublisher:
     def __init__(self, client_key: str, client_secret: str, refresh_token: str,
                  privacy: str, http: httpx.AsyncClient,
                  on_refresh: Callable[[str], None] | None = None,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep, draft: bool = False):
         self.client_key = client_key
         self.client_secret = client_secret
         self.refresh_token = refresh_token
@@ -29,6 +30,7 @@ class TikTokPublisher:
         self.http = http
         self.on_refresh = on_refresh
         self.sleep = sleep
+        self.draft = draft
 
     async def _token(self) -> str:
         r = await self.http.post(f"{TT}/oauth/token/", data={
@@ -51,13 +53,18 @@ class TikTokPublisher:
                    "Content-Type": "application/json; charset=UTF-8"}
         data = job.video_path.read_bytes()
         size = len(data)
-        init = await self.http.post(f"{TT}/post/publish/video/init/", headers=headers, json={
-            "post_info": {"title": job.caption[:2200], "privacy_level": self.privacy,
-                          "disable_duet": False, "disable_comment": False,
-                          "disable_stitch": False},
-            "source_info": {"source": "FILE_UPLOAD", "video_size": size,
-                            "chunk_size": size, "total_chunk_count": 1},
-        })
+        source_info = {"source": "FILE_UPLOAD", "video_size": size,
+                       "chunk_size": size, "total_chunk_count": 1}
+        if self.draft:  # caixa de entrada do app: não precisa de auditoria
+            init = await self.http.post(f"{TT}/post/publish/inbox/video/init/",
+                                        headers=headers, json={"source_info": source_info})
+        else:
+            init = await self.http.post(f"{TT}/post/publish/video/init/", headers=headers, json={
+                "post_info": {"title": job.caption[:2200], "privacy_level": self.privacy,
+                              "disable_duet": False, "disable_comment": False,
+                              "disable_stitch": False},
+                "source_info": source_info,
+            })
         j = init.json()
         if j.get("error", {}).get("code", "ok") != "ok":
             raise PublishError(f"tiktok init: {j.get('error')}")
@@ -71,7 +78,7 @@ class TikTokPublisher:
             st = await self.http.post(f"{TT}/post/publish/status/fetch/", headers=headers,
                                       json={"publish_id": publish_id})
             status = st.json().get("data", {}).get("status")
-            if status == "PUBLISH_COMPLETE":
+            if status in ("PUBLISH_COMPLETE", "SEND_TO_USER_INBOX"):
                 return PostResult(self.name, publish_id, "")
             if status == "FAILED":
                 raise PublishError(f"tiktok falhou: {st.json()}")
