@@ -134,6 +134,7 @@ class ChatMonitor:
             await asyncio.sleep(5)
 
     async def _session(self) -> None:
+        self._joined.clear()  # conexão nova começa sem nenhum canal
         reader, writer = await asyncio.open_connection(self.host, self.port, ssl=True)
         nick = f"justinfan{random.randint(10000, 99999)}"
         writer.write(f"PASS SCHMOOPIIE\r\nNICK {nick}\r\n".encode())

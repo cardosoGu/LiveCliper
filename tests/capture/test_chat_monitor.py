@@ -76,3 +76,21 @@ def test_commands_and_bots_do_not_count_as_hype():
     mon.handle_line(":StreamElements!se@se PRIVMSG #gaules :kkkk", 1.0)
     mon.handle_line(":b!b@b PRIVMSG #gaules :KKKKKKK", 1.0)
     assert mon.detectors["gaules"].msgs == [(1.0, "KKKKKKK")]
+
+
+async def test_new_session_starts_with_nothing_joined(monkeypatch):
+    """Reiniciar o automático cancela chat.run sem limpar _joined; a nova conexão
+    precisa voltar a dar JOIN nos canais."""
+    import asyncio
+
+    async def boom(*a, **k):
+        raise ConnectionError("sem rede no teste")
+
+    monkeypatch.setattr(asyncio, "open_connection", boom)
+    mon = ChatMonitor(lambda *a: None, FakeDetector)
+    mon._joined = {"gaules"}  # sobra da conexão anterior
+    try:
+        await mon._session()
+    except ConnectionError:
+        pass
+    assert mon._joined == set()
