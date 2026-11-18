@@ -22,9 +22,14 @@ log = logging.getLogger(__name__)
 
 def build_panel_view(s: PanelState) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(
-        label=f"📡 Automático: {'LIGADO' if s.auto_on else 'DESLIGADO'}", custom_id="panel:auto",
-        style=discord.ButtonStyle.success if s.auto_on else discord.ButtonStyle.secondary, row=0))
+    if s.auto_on and not s.auto_running:
+        auto_label, auto_style = "📡 Automático: ⚠️ aguardando Twitch", discord.ButtonStyle.secondary
+    elif s.auto_on:
+        auto_label, auto_style = "📡 Automático: LIGADO", discord.ButtonStyle.success
+    else:
+        auto_label, auto_style = "📡 Automático: DESLIGADO", discord.ButtonStyle.secondary
+    view.add_item(discord.ui.Button(label=auto_label, custom_id="panel:auto",
+                                    style=auto_style, row=0))
     view.add_item(discord.ui.Button(label="▶ Retomar" if s.paused else "⏸ Pausar",
                                     custom_id="panel:pause", style=discord.ButtonStyle.secondary,
                                     row=0))

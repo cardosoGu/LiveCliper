@@ -17,6 +17,7 @@ PLATFORM_LABEL = {"instagram": "Reels", "youtube": "Shorts", "tiktok": "TikTok"}
 class PanelState:
     text: str
     auto_on: bool
+    auto_running: bool
     paused: bool
     known: list[str]
     selected: list[str]
@@ -50,7 +51,8 @@ class Panel:
             f"a cada {rt.post_interval_min()} min · até {rt.post_max_per_day()}/dia",
             *self.status_lines(),
         ]
-        return PanelState(text="\n".join(lines), auto_on=rt.auto_on(), paused=rt.paused(),
+        return PanelState(text="\n".join(lines), auto_on=rt.auto_on(), auto_running=bool(self.auto.running),
+                          paused=rt.paused(),
                           known=rt.known_categories(), selected=rt.categories(),
                           min_viewers=rt.min_viewers(), min_score=rt.min_score(),
                           interval=rt.post_interval_min(), limit=rt.post_max_per_day(),

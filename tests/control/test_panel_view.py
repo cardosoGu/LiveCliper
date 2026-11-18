@@ -3,7 +3,7 @@ from liveclips.control.panel import PanelState
 
 
 def state(**kw):
-    base = dict(text="t", auto_on=True, paused=False, known=["Just Chatting", "GTA V"],
+    base = dict(text="t", auto_on=True, auto_running=True, paused=False, known=["Just Chatting", "GTA V"],
                 selected=["GTA V"], min_viewers=1000, min_score=6.0, interval=45, limit=8,
                 platforms=[("instagram", True, True), ("youtube", True, False),
                            ("tiktok", False, True)])
@@ -31,3 +31,15 @@ def test_platforms_view_marks_state_and_disables_unconfigured():
     assert by_id["panel:plat-instagram"].label == "Reels ✅"
     assert by_id["panel:plat-tiktok"].label == "TikTok ⚪"
     assert by_id["panel:plat-youtube"].disabled is True
+
+
+def test_auto_button_shows_real_state():
+    import discord
+
+    on = build_panel_view(state()).children[0]
+    assert on.label == "📡 Automático: LIGADO" and on.style is discord.ButtonStyle.success
+    wait = build_panel_view(state(auto_running=False)).children[0]
+    assert wait.label == "📡 Automático: ⚠️ aguardando Twitch"
+    assert wait.style is discord.ButtonStyle.secondary
+    off = build_panel_view(state(auto_on=False, auto_running=False)).children[0]
+    assert off.label == "📡 Automático: DESLIGADO"

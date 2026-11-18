@@ -83,3 +83,11 @@ async def test_bad_values_are_explained(db):
     assert "Ação desconhecida" in await panel.handle("explode", [])
     assert "inválid" in (await panel.handle("viewers", ["muitos"])).lower()
     assert "pelo menos uma" in await panel.handle("cats", [])
+
+
+def test_state_auto_running_comes_from_controller(db):
+    panel, rt, auto = make(db)
+    assert panel.state().auto_running is True
+    auto.running = False
+    s = panel.state()
+    assert s.auto_on and s.auto_running is False

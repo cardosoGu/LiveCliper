@@ -90,5 +90,7 @@ class AutoController:
 
     def status_line(self) -> str:
         if not self.running:
+            if self.runtime.auto_on():
+                return "📡 Automático: ⚠️ aguardando Twitch"
             return "📡 Automático: DESLIGADO"
         return f"📡 Automático: LIGADO · {len(self.found)} categorias"
