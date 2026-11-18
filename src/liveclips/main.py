@@ -17,11 +17,14 @@ from .capture.twitch.clipper import Clipper, TokenBucket
 from .capture.twitch.discovery import discovery_loop
 from .capture.twitch.public_clips import collect_twitch_public
 from .control.approval import ApprovalDesk, LogApprovalTransport
+from .control.auto import AutoController
 from .control.manual_test import ManualTester
 from .control.monitor import LogTransport, Monitor
+from .control.panel import Panel
 from .control.runtime import RuntimeSettings
 from .core.config import Settings, load_settings
 from .core.db import DB
+from .core.timeutil import local_day, local_midnight_utc, utcnow
 from .core.supervisor import supervise
 from .processing.cleanup import cleanup_loop
 from .processing.ffmpeg import make_preview
@@ -78,15 +81,6 @@ async def amain() -> None:
             cfg.twitch_client_id, cfg.twitch_client_secret,
             db.kv_get("twitch_refresh_token") or cfg.twitch_bot_refresh_token, http,
             on_refresh=lambda t: db.kv_set("twitch_refresh_token", t))
-        found = await twitch.get_game_ids(cfg.twitch_game_names)
-        missing = [n for n in cfg.twitch_game_names if n.lower() not in
-                   {f.lower() for f in found}]
-        if missing:
-            log.warning("categorias não encontradas na Twitch (ignoradas): %s", missing)
-        if not found:
-            raise SystemExit(f"nenhuma categoria encontrada: {cfg.twitch_game_name}")
-        game_id = list(found.values())
-        log.info("categorias: %s", found)
 
         viewers_cache: dict[str, int] = {}
         clipper = Clipper(twitch, db, TokenBucket(cfg.clip_rate_seconds),
@@ -102,6 +96,22 @@ async def amain() -> None:
                           chat_summary=chat.summary)
         if bot is not None:
             bot.attach(monitor)
+
+        def make_auto_jobs(game_ids: list[str], min_viewers: int) -> dict:
+            return {
+                "chat": chat.run,
+                "discovery": lambda: discovery_loop(twitch, game_ids, chat, db,
+                                                    cfg.monitor_max_channels, viewers_cache,
+                                                    min_viewers=min_viewers),
+                "clipper": clipper.run,
+                "twitch_clips": lambda: collector_loop(
+                    lambda now: collect_twitch_public(twitch, list(chat.channels.values()),
+                                                      db, now),
+                    180, "twitch_clips"),
+            }
+
+        auto = AutoController(runtime, twitch.get_game_ids, make_auto_jobs, monitor.alert,
+                              on_stop=lambda: chat.set_channels([]))
         pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)
         monitor.tester = ManualTester(twitch, db, pipeline, chat,
                                       followup_delay_s=cfg.clip_followup_s)
@@ -114,22 +124,32 @@ async def amain() -> None:
             approval_transport = LogApprovalTransport()
         desk = ApprovalDesk(db, runtime, approval_transport, scheduler.ensure_rendered,
                             make_preview, media_server.expose,
-                            [p.name for p in publishers], cfg.discord_upload_limit_mb)
+                            [p.name for p in publishers], cfg.discord_upload_limit_mb,
+                            retry=scheduler.publish_to)
         scheduler.on_status = desk.on_status
         if bot is not None:
             bot.attach_desk(desk)
 
+        def panel_status() -> list[str]:
+            day = local_day(utcnow()).isoformat()
+            evals = int(float(db.kv_get(f"ai_evals:{day}", "0") or 0))
+            waiting = len(db.awaiting_cards(posted=True, limit=1000)) +                 len(db.awaiting_cards(posted=False, limit=1000))
+            posts = db.publications_count_since(local_midnight_utc(utcnow()))
+            return [
+                f"🔎 Lives monitoradas: {len(chat.channels)}",
+                f"🧠 IA: {evals} avaliações hoje · "
+                f"{'⚠️ fora do ar, tentando de novo' if pipeline.ai_down else 'Gemini ✅'}",
+                f"📥 Aprovação: {waiting} aguardando",
+                f"📤 Hoje: {posts} publicados",
+            ]
+
+        panel = Panel(runtime, auto, [p.name for p in publishers], panel_status,
+                      twitch.get_game_ids)
+        if bot is not None:
+            bot.attach_panel(panel)
+
         await media_server.start()
         jobs = {
-            "chat": chat.run,
-            "discovery": lambda: discovery_loop(twitch, game_id, chat, db,
-                                                cfg.monitor_max_channels, viewers_cache,
-                                                min_viewers=cfg.min_viewers),
-            "clipper": clipper.run,
-            "twitch_clips": lambda: collector_loop(
-                lambda now: collect_twitch_public(twitch, list(chat.channels.values()),
-                                                db, now),
-                180, "twitch_clips"),
             "pipeline": pipeline.run,
             "scheduler": scheduler.run,
             "approval": desk.run,
@@ -138,6 +158,7 @@ async def amain() -> None:
         }
         if bot is not None:
             jobs["discord"] = bot.run
+            jobs["panel"] = bot.run_panel
         if cfg.kick_enabled:
             jobs["kick_clips"] = lambda: collector_loop(
                 lambda now: collect_kick(http, cfg.kick_category_slug, db, now),
@@ -145,10 +166,12 @@ async def amain() -> None:
 
         plats = ", ".join(p.name for p in publishers) or "nenhuma"
         # Vai para a fila de avisos; o sender entrega quando o Discord estiver pronto.
-        await monitor.info(
-            f"🤖 **liveclips iniciado** · categorias: {', '.join(found)} · "
-            f"mín. {cfg.min_viewers} espectadores · "
-            f"plataformas configuradas: {plats}")
+        try:
+            await monitor.info(await auto.apply())
+        except Exception as e:
+            log.exception("automático não iniciou")
+            await monitor.alert(f"Automático não iniciou: {e}")
+        await monitor.info(f"🤖 **liveclips iniciado** · plataformas configuradas: {plats}")
         await asyncio.gather(*(supervise(n, f, monitor.alert) for n, f in jobs.items()))
 
 
