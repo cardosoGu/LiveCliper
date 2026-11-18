@@ -72,3 +72,35 @@ def test_reset_processing(db):
     db.insert_candidate(c)
     assert db.reset_processing() == 1
     assert db.get(c.id).state is State.DETECTED
+
+
+def test_approval_fields_roundtrip(db):
+    c = make_candidate(state=State.AWAITING_APPROVAL, approval_message_id=123, priority=1)
+    db.insert_candidate(c)
+    got = db.get(c.id)
+    assert got.state is State.AWAITING_APPROVAL
+    assert got.approval_message_id == 123 and got.priority == 1
+
+
+def test_old_database_gets_new_columns(tmp_path):
+    import sqlite3
+
+    from liveclips.core.db import DB
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE candidates (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " platform TEXT NOT NULL, source TEXT NOT NULL, clip_id TEXT NOT NULL UNIQUE,"
+        " clip_url TEXT NOT NULL, channel TEXT NOT NULL, created_at TEXT NOT NULL,"
+        " duration REAL NOT NULL, title TEXT NOT NULL, viewers INTEGER NOT NULL,"
+        " view_count INTEGER NOT NULL, spike_score REAL NOT NULL, rank REAL NOT NULL,"
+        " state TEXT NOT NULL, raw_path TEXT, vertical_path TEXT, transcript TEXT,"
+        " ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL)")
+    conn.commit()
+    conn.close()
+    db = DB(str(path))
+    c = make_candidate(priority=1, approval_message_id=7)
+    db.insert_candidate(c)
+    got = db.get(c.id)
+    assert got.priority == 1 and got.approval_message_id == 7

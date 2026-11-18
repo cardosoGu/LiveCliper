@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS candidates (
   view_count INTEGER NOT NULL, spike_score REAL NOT NULL, rank REAL NOT NULL,
   state TEXT NOT NULL, raw_path TEXT, vertical_path TEXT, transcript TEXT,
   ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL,
-  extra_clip_url TEXT
+  extra_clip_url TEXT, approval_message_id INTEGER, priority INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cand_state ON candidates(state);
 CREATE INDEX IF NOT EXISTS idx_cand_channel ON candidates(channel, created_at);
@@ -36,7 +36,7 @@ _COLS = [
     "platform", "source", "clip_id", "clip_url", "channel", "created_at",
     "duration", "title", "viewers", "view_count", "spike_score", "rank",
     "state", "raw_path", "vertical_path", "transcript", "ai_score", "ai_json",
-    "reason", "updated_at", "extra_clip_url",
+    "reason", "updated_at", "extra_clip_url", "approval_message_id", "priority",
 ]
 
 
@@ -69,11 +69,19 @@ class DB:
         self.conn.executescript(SCHEMA)
         self._migrate()
 
+    # colunas que bancos antigos podem não ter: nome -> declaração
+    _NEW_COLUMNS = {
+        "extra_clip_url": "TEXT",
+        "approval_message_id": "INTEGER",
+        "priority": "INTEGER NOT NULL DEFAULT 0",
+    }
+
     def _migrate(self) -> None:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(candidates)")}
-        if "extra_clip_url" not in cols:  # bancos criados antes dos clipes de 60 s
-            self.conn.execute("ALTER TABLE candidates ADD COLUMN extra_clip_url TEXT")
-            self.conn.commit()
+        for name, decl in self._NEW_COLUMNS.items():
+            if name not in cols:
+                self.conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {decl}")
+        self.conn.commit()
 
     # --- candidatos -------------------------------------------------------
     def insert_candidate(self, c: Candidate) -> int | None:

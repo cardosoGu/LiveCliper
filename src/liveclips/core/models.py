@@ -19,6 +19,9 @@ class State(StrEnum):
     DELETED = "deleted"
     FAILED = "failed"
     TESTED = "tested"  # criado pelo /testar: nunca entra na fila de publicação
+    AWAITING_APPROVAL = "awaiting_approval"  # IA aprovou; card no #aprovação
+    APPROVED = "approved"  # admin aprovou; fila de publicação
+    DISCARDED = "discarded"  # admin descartou
 
 
 @dataclass
@@ -45,6 +48,8 @@ class Candidate:
     ai_json: str | None = None
     reason: str | None = None
     updated_at: datetime = field(default_factory=utcnow)
+    approval_message_id: int | None = None  # mensagem do card no #aprovação
+    priority: int = 0  # 1 = "⚡ Agora": fura o intervalo entre posts
 
 
 def is_expired(c: Candidate, now: datetime, ttl_min: int) -> bool:
