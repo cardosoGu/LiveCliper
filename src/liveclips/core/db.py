@@ -121,6 +121,24 @@ class DB:
         ).fetchall()
         return [_from_row(r) for r in rows]
 
+    def awaiting_cards(self, posted: bool, limit: int = 50) -> list[Candidate]:
+        """Candidatos aguardando aprovação, com (posted) ou sem card no #aprovação."""
+        cond = "IS NOT NULL" if posted else "IS NULL"
+        rows = self.conn.execute(
+            "SELECT * FROM candidates WHERE state=? AND source<>'manual_test'"
+            f" AND approval_message_id {cond} ORDER BY id ASC LIMIT ?",
+            (State.AWAITING_APPROVAL.value, limit),
+        ).fetchall()
+        return [_from_row(r) for r in rows]
+
+    def protected_media_ids(self) -> set[int]:
+        """Clipes cujo vídeo ainda será usado (aguardando ou aprovados)."""
+        rows = self.conn.execute(
+            "SELECT id FROM candidates WHERE state IN (?,?)",
+            (State.AWAITING_APPROVAL.value, State.APPROVED.value),
+        ).fetchall()
+        return {int(r["id"]) for r in rows}
+
     def channel_candidates_since(self, channel: str, since: datetime) -> list[Candidate]:
         rows = self.conn.execute(
             "SELECT * FROM candidates WHERE channel=? AND created_at>=?",
@@ -161,7 +179,8 @@ class DB:
 
     def publications_count_since(self, since: datetime) -> int:
         row = self.conn.execute(
-            "SELECT COUNT(DISTINCT candidate_id) AS n FROM publications WHERE published_at>=?",
+            "SELECT COUNT(DISTINCT candidate_id) AS n FROM publications WHERE published_at>=?"
+            " AND platform<>'dry_run'",
             (since.isoformat(),),
         ).fetchone()
         return int(row["n"])
@@ -169,7 +188,7 @@ class DB:
     def last_publication(self) -> tuple[datetime, str] | None:
         row = self.conn.execute(
             "SELECT p.published_at, c.channel FROM publications p"
-            " JOIN candidates c ON c.id = p.candidate_id"
+            " JOIN candidates c ON c.id = p.candidate_id WHERE p.platform<>'dry_run'"
             " ORDER BY p.published_at DESC, p.id DESC LIMIT 1"
         ).fetchone()
         return (parse_iso(row["published_at"]), row["channel"]) if row else None

@@ -102,7 +102,9 @@ class ManualTester:
         self.db.insert_candidate(c)
         await self.pipeline.process(c)
         c = self.db.get(c.id)
-        outcome = OUTCOMES.get(c.state, c.state.value)
+        # o pipeline termina o /testar em `tested`; aprovado pela IA = "iria para aprovação"
+        shown = State.AWAITING_APPROVAL if c.state is State.TESTED else c.state
+        outcome = OUTCOMES.get(shown, shown.value)
 
         lines = [f"🧪 **TESTE (nada foi publicado)** · {credit_text(c.platform, c.channel)}",
                  f"Clipe: {clip['url']}"]

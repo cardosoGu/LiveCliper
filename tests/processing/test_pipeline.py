@@ -140,3 +140,14 @@ def test_backoff_grows_while_ai_is_down_and_resets(db, tmp_path):
     assert p.next_delay() == 5
     p.ai_down = True
     assert p.next_delay() == 60
+
+
+async def test_manual_test_clip_never_awaits_approval(db, tmp_path):
+    cfg = load_settings({})
+    c = make_candidate(source="manual_test", state=State.PROCESSING)
+    db.insert_candidate(c)
+    p = Pipeline(db, cfg, FakeEvaluator(verdict(8.0)), None, tmp_path, fake_ops())
+    await p.process(c)
+    got = db.get(c.id)
+    assert got.state is State.TESTED and got.ai_score == 8.0
+    assert db.by_state(State.AWAITING_APPROVAL) == []

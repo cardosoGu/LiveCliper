@@ -178,3 +178,20 @@ async def test_one_broken_card_does_not_block_the_others(db, tmp_path):
     assert db.get(good.id).approval_message_id == 1001
     assert db.get(bad.id).approval_message_id is None
     assert db.get(bad.id).state is State.AWAITING_APPROVAL
+
+
+async def test_tick_ignores_manual_test_clips(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    awaiting(db, source="manual_test")
+    assert await desk.tick() == 0 and t.posts == []
+
+
+async def test_new_card_posted_even_with_many_pending_cards(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    for i in range(60):
+        c = awaiting(db, clip_id=f"twitch:{i}")
+        c.approval_message_id = 500 + i
+        db.update(c)
+    new = awaiting(db, clip_id="twitch:novo", rank=0)
+    assert await desk.tick() == 1
+    assert t.posts[0][0] == new.id

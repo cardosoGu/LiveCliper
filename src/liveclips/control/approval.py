@@ -74,14 +74,18 @@ class ApprovalDesk:
     # --- cards ------------------------------------------------------------
     async def tick(self) -> int:
         posted = 0
-        for c in self.db.by_state(State.AWAITING_APPROVAL, 50):
+        for c in self.db.awaiting_cards(posted=False, limit=100):
+            if c.source == "manual_test":
+                continue  # /testar nunca vira card
             try:
-                if c.approval_message_id is None:
-                    if await self._post(c):
-                        posted += 1
-                else:
-                    await self._refresh_age(c)
+                if await self._post(c):
+                    posted += 1
             except Exception as e:  # um card quebrado não trava a fila inteira
+                log.warning("card do clipe %s falhou: %s", c.id, e)
+        for c in self.db.awaiting_cards(posted=True, limit=50):
+            try:
+                await self._refresh_age(c)
+            except Exception as e:
                 log.warning("card do clipe %s falhou: %s", c.id, e)
         return posted
 
@@ -90,8 +94,9 @@ class ApprovalDesk:
         if not await self.render(c, verdict):
             return False  # o render marcou o clipe como failed e avisou no #logs
         video, link = await self._attachment(Path(c.vertical_path))
+        no_video = video is None and link is None
         c.approval_message_id = await self.transport.post(
-            self.card_text(c, verdict), video, link, c.id, True)
+            self.card_text(c, verdict, no_video), video, link, c.id, True)
         self.db.update(c)
         self._age_shown[c.id] = self._age_hours(c)
         return True
@@ -127,7 +132,7 @@ class ApprovalDesk:
         await self.transport.edit(c.approval_message_id, c.id,
                                   self.card_text(c, verdict), True)
 
-    def card_text(self, c: Candidate, verdict: Verdict) -> str:
+    def card_text(self, c: Candidate, verdict: Verdict, no_video: bool = False) -> str:
         targets = ", ".join(PLATFORM_LABEL.get(n, n) for n in self.platform_names
                             if self.runtime.platform_enabled(n)) or "nenhuma (todas desligadas)"
         origin = f"📡 Automático · {credit_text(c.platform, c.channel)}"
@@ -140,6 +145,8 @@ class ApprovalDesk:
         hours = self._age_hours(c)
         if c.source != "ondemand" and hours >= AGE_WARN_H:
             lines.append(f"⏰ há {hours} h")
+        if no_video:
+            lines.append("⚠️ vídeo indisponível no Discord")
         return "\n".join(lines)
 
     # --- ações ------------------------------------------------------------

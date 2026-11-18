@@ -7,26 +7,32 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 log = logging.getLogger(__name__)
 
 
 def cleanup_media(media_dir: Path, now: datetime | None = None,
-                  max_age_h: float = 48) -> int:
+                  max_age_h: float = 48,
+                  protected: Callable[[], set[int]] | None = None) -> int:
     cutoff = (now.timestamp() if now else time.time()) - max_age_h * 3600
     removed = 0
     if not media_dir.exists():
         return 0
+    keep = {str(i) for i in protected()} if protected else set()  # cards não expiram
     for d in media_dir.iterdir():
+        if d.name in keep:
+            continue
         if d.is_dir() and d.stat().st_mtime < cutoff:
             shutil.rmtree(d, ignore_errors=True)
             removed += 1
     return removed
 
 
-async def cleanup_loop(media_dir: Path, interval_s: float = 3600) -> None:
+async def cleanup_loop(media_dir: Path, interval_s: float = 3600,
+                       protected: Callable[[], set[int]] | None = None) -> None:
     while True:
-        n = await asyncio.to_thread(cleanup_media, media_dir)
+        n = await asyncio.to_thread(cleanup_media, media_dir, protected=protected)
         if n:
             log.info("limpeza: %d pastas de mídia removidas", n)
         await asyncio.sleep(interval_s)

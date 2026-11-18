@@ -135,3 +135,14 @@ async def test_render_split_real_ffmpeg(tmp_path: Path, with_cam):
                        "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", str(out))
     assert int(frames.strip()) >= 235  # ~30 fps até o fim: nada congelado
     assert len(await extract_frames(out, tmp_path / "f", 4)) == 4
+
+
+def test_cleanup_keeps_protected_dirs(tmp_path: Path):
+    keep, drop = tmp_path / "1", tmp_path / "2"
+    keep.mkdir()
+    drop.mkdir()
+    past = time.time() - 50 * 3600
+    for d in (keep, drop):
+        os.utime(d, (past, past))
+    assert cleanup_media(tmp_path, protected=lambda: {1}) == 1
+    assert keep.exists() and not drop.exists()

@@ -104,3 +104,16 @@ def test_old_database_gets_new_columns(tmp_path):
     db.insert_candidate(c)
     got = db.get(c.id)
     assert got.priority == 1 and got.approval_message_id == 7
+
+
+def test_dry_run_publications_do_not_count(db):
+    from datetime import datetime, timezone
+    cid = db.insert_candidate(make_candidate())
+    at = datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc)
+    db.record_publication(cid, "dry_run", "x", "", at)
+    since = datetime(2026, 11, 19, 0, 0, tzinfo=timezone.utc)
+    assert db.publications_count_since(since) == 0
+    assert db.last_publication() is None
+    db.record_publication(cid, "instagram", "y", "u", at)
+    assert db.publications_count_since(since) == 1
+    assert db.last_publication() is not None

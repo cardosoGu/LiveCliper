@@ -114,6 +114,8 @@ class Pipeline:
             self._set(c, State.REJECTED_AI, f"inseguro: {verdict.reason}")
         elif verdict.score < self.min_score():
             self._set(c, State.REJECTED_AI, f"nota {verdict.score:.1f}: {verdict.reason}")
+        elif c.source == "manual_test":
+            self._set(c, State.TESTED, verdict.reason)  # /testar nunca vira card
         else:
             self._set(c, State.AWAITING_APPROVAL, verdict.reason)
             log.info("aguardando aprovação: %s (%s, nota %.1f)",

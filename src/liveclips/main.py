@@ -134,7 +134,7 @@ async def amain() -> None:
             "scheduler": scheduler.run,
             "approval": desk.run,
             "notifier": monitor.run_sender,
-            "cleanup": lambda: cleanup_loop(media_dir),
+            "cleanup": lambda: cleanup_loop(media_dir, protected=db.protected_media_ids),
         }
         if bot is not None:
             jobs["discord"] = bot.run
