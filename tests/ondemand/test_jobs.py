@@ -182,6 +182,28 @@ async def test_live_window_offsets_cuts_to_absolute_time(db, tmp_path):
     await r.process(db.get_job(jid))
     [c] = db.job_candidates(jid)
     assert c.start_s >= 48.0  # o tempo relativo da janela voltou a ser absoluto
+    section = next(x for x in calls if isinstance(x, tuple) and x[0] == "section")
+    assert section[1] == c.start_s and section[2] == c.end_s  # download usa tempo absoluto
+    assert c.clip_id == f"ondemand:{jid}:{int(c.start_s * 10)}"
+
+
+async def test_twitch_live_from_zero_still_bounds_the_download(db, tmp_path):
+    live = VideoMeta("u", "Live", "gaules", "twitch", 0.0, True, None, "x", "gaules")
+
+    class FakeTwitch:
+        async def get_user(self, login):
+            return {"id": "1"}
+
+        async def get_live_vod(self, uid):
+            return {"id": "9", "duration": "0h2m0s", "created_at": "2026-11-19T00:00:00Z"}
+
+    r, notes, calls = make(db, tmp_path, meta=live)
+    r.twitch = FakeTwitch()
+    r.now_fn = lambda: datetime.fromtimestamp(1000.0, tz=timezone.utc)
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    audio_call = next(c for c in calls if isinstance(c, tuple) and c[0] == "audio")
+    assert audio_call[1:3] == (0, 120.0)
 
 
 async def test_check_evaluating_closes_job_with_summary(db, tmp_path):

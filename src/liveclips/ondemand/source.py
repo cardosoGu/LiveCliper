@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+import httpx
 from urllib.parse import urlparse
+
+from ..core.timeutil import parse_iso
 
 from .ingest import VideoMeta
 from .topics import fmt_time
-from .twitch import parse_twitch_duration
+from .twitch import TwitchError, parse_twitch_duration
 
 
 class SourceError(Exception):
@@ -33,6 +37,9 @@ def _live_window(elapsed: float, max_s: float) -> tuple[float, str]:
 async def resolve_source(meta: VideoMeta, now_ts: float, max_s: float, twitch=None) -> Source:
     if not meta.is_live:
         if meta.duration <= 0:
+            if meta.live_status in ("is_upcoming", "post_live"):
+                raise SourceError("essa live ainda não começou ou acabou de terminar; tente de "
+                                  "novo em alguns minutos")
             raise SourceError("não consegui ler a duração do vídeo")
         if meta.duration > max_s:
             raise SourceError(f"vídeo longo demais (máximo {max_s / 3600:g} h)")
@@ -41,19 +48,32 @@ async def resolve_source(meta: VideoMeta, now_ts: float, max_s: float, twitch=No
         if meta.live_start is None:
             raise SourceError("não consegui saber há quanto tempo a live está no ar")
         elapsed = max(0.0, now_ts - meta.live_start)
+        if elapsed < 60:
+            raise SourceError("a live acabou de começar; mande o link de novo daqui a pouco")
         start, note = _live_window(elapsed, max_s)
         return Source(meta.url, True, start, elapsed, note)
     if meta.platform == "twitch":
         if twitch is None:
             raise SourceError("para cortar live da Twitch em andamento, configure "
                               "TWITCH_CLIENT_ID e TWITCH_CLIENT_SECRET")
-        login = urlparse(meta.url).path.strip("/").split("/")[0].lower()
-        user = await twitch.get_user(login) if login else None
-        vod = await twitch.get_live_vod(user["id"]) if user else None
+        login = (meta.credit_hint or urlparse(meta.url).path.strip("/").split("/")[0]).lower()
+        no_vod = SourceError("essa live não está salvando VOD (ou o VOD é só para inscritos); "
+                             "mande o link quando ela acabar")
+        try:
+            user = await twitch.get_user(login) if login else None
+            vod = await twitch.get_live_vod(user["id"]) if user else None
+        except (TwitchError, httpx.HTTPError) as e:
+            raise SourceError("não consegui consultar a Twitch agora; tente de novo em alguns "
+                              "minutos") from e
         if not vod:
-            raise SourceError("essa live não está salvando VOD (ou o VOD é só para inscritos); "
-                              "mande o link quando ela acabar")
+            raise no_vod
+        if meta.live_start is not None:
+            created = parse_iso(vod["created_at"]).timestamp()
+            if abs(created - meta.live_start) > 15 * 60:
+                raise no_vod  # o último arquivo é de outra live
         elapsed = parse_twitch_duration(vod["duration"])
+        if elapsed <= 0:
+            raise SourceError("não consegui saber a duração do VOD da live")
         start, note = _live_window(elapsed, max_s)
         return Source(f"https://www.twitch.tv/videos/{vod['id']}", False, start, elapsed, note)
     if meta.platform == "kick":

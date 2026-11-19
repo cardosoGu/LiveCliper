@@ -128,7 +128,7 @@ class OnDemandRunner:
         self.db.update_job(jid, state="running")
         try:
             meta, source = await self._meta(job, work)
-            audio = await self._audio(job, work, source)
+            audio = await self._audio(job, work, meta, source)
             transcript = await self._transcript(job, work, audio)
             if not transcript.words:
                 await self._finish(job, True, "nenhuma fala encontrada no vídeo", "done")
@@ -182,11 +182,11 @@ class OnDemandRunner:
             await self._progress(job, "meta", source.note)
         return meta, source
 
-    async def _audio(self, job, work, source):
+    async def _audio(self, job, work, meta, source):
         path = work / "audio.mp3"
         if not path.exists():
             await self._progress(job, "audio", "⬇️ baixando o áudio…")
-            windowed = source.live or source.start > 0
+            windowed = meta.is_live or source.start > 0
             path = await self.ops.download_audio(
                 source.url, path, start=source.start if windowed else None,
                 end=source.end if windowed else None, live=source.live)

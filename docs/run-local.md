@@ -73,6 +73,8 @@ O TikTok também aceita `TIKTOK_MODE=draft`: o vídeo vai como rascunho no app d
 2. Cole no canal de links `link [instrução]` (ex.: um podcast do YouTube e o que você quer cortar).
 3. Acompanhe o progresso na thread "Cortes #N" que o bot abre na mensagem.
 4. Os cortes chegam no #aprovação, com o título do vídeo e o minuto. O limite de duração é `ONDEMAND_MAX_HOURS`.
+
+Links de live em andamento também funcionam: no YouTube corta do início da live até agora (ou só as últimas `ONDEMAND_MAX_HOURS` horas); na Twitch precisa de `TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET` e do VOD ligado; na Kick só depois que a live acabar.
 5. Aprove (ou ⚡ agora) e o clipe é publicado nas plataformas ligadas.
 
 ## 7. Publicar de verdade

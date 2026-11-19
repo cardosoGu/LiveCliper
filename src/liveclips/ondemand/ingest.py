@@ -27,6 +27,7 @@ _FRIENDLY = [
     ("private video", "vídeo privado: só dá para cortar vídeos públicos ou não listados"),
     ("members-only", "vídeo só para membros do canal"),
     ("video unavailable", "vídeo indisponível (removido, bloqueado ou link errado)"),
+    ("not currently live", "esse canal não está ao vivo agora; mande o link de um vídeo ou VOD"),
     ("unsupported url", "link não suportado: use YouTube, VOD da Twitch ou da Kick"),
 ]
 
@@ -61,6 +62,7 @@ class VideoMeta:
     video_id: str
     credit_hint: str = ""  # só o que vai depois do host: "Podpah", "channel/UC…" ou o domínio
     live_start: float | None = None  # epoch (s) do início da live; só quando is_live
+    live_status: str | None = None  # is_live | is_upcoming | post_live | not_live…
 
 
 def _url_path(url: str | None) -> str:
@@ -94,7 +96,7 @@ def parse_metadata(info: dict, url: str) -> VideoMeta:
                      is_live=is_live, heatmap=info.get("heatmap") or None,
                      video_id=str(info.get("id") or ""),
                      credit_hint=_credit_hint(info, platform, url, str(channel)),
-                     live_start=live_start)
+                     live_start=live_start, live_status=info.get("live_status"))
 
 
 async def probe(url: str, run=run) -> VideoMeta:
