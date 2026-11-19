@@ -432,7 +432,8 @@ class DiscordJobNotifier:
         self._last: dict[int, str] = {}
 
     async def _channel(self, channel_id):
-        return self.bot.client.get_channel(channel_id) or \n            await self.bot.client.fetch_channel(channel_id)
+        return (self.bot.client.get_channel(channel_id)
+                or await self.bot.client.fetch_channel(channel_id))
 
     async def progress(self, job, text):
         if not job.get("thread_id") or not job.get("status_message_id"):
