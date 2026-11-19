@@ -28,6 +28,9 @@ async def transcribe_long(audio: Path, groq_key: str, http, work_dir: Path,
     segments, words, langs = [], [], []
     for i, part in enumerate(parts):
         t = await transcribe_fn(part, groq_key, http)
+        if not t.segments and t.language is None:
+            # transcribe() engole falhas e devolve Transcript() vazio: falha alto, não buraco
+            raise RuntimeError(f"transcrição falhou no pedaço {i + 1} de {len(parts)}")
         off = i * chunk_s
         segments += [{**s, "start": s["start"] + off, "end": s["end"] + off}
                      for s in t.segments]
@@ -40,8 +43,10 @@ async def transcribe_long(audio: Path, groq_key: str, http, work_dir: Path,
 
 
 def dump_transcript(t: Transcript, path: Path) -> None:
-    path.write_text(json.dumps({"segments": t.segments, "language": t.language,
-                                "words": t.words}, ensure_ascii=False), encoding="utf-8")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"segments": t.segments, "language": t.language,
+                               "words": t.words}, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)  # troca atômica: queda no meio nunca deixa cache corrompido
 
 
 def load_transcript(path: Path) -> Transcript:

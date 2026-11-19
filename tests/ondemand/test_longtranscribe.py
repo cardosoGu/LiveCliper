@@ -1,4 +1,4 @@
-from pathlib import Path
+import pytest
 
 from liveclips.ondemand.longtranscribe import dump_transcript, load_transcript, transcribe_long
 from liveclips.processing.transcribe import Transcript
@@ -24,3 +24,17 @@ async def test_chunks_are_offset_and_merged(tmp_path):
     dump_transcript(t, tmp_path / "t.json")
     again = load_transcript(tmp_path / "t.json")
     assert again.words == t.words and again.language == "pt"
+
+
+async def test_failed_piece_raises_instead_of_silent_hole(tmp_path):
+    async def split(src, out_dir, chunk_s):
+        return [tmp_path / "p0.mp3", tmp_path / "p1.mp3"]
+
+    async def fake(audio, key, http):
+        if audio.name == "p0.mp3":
+            return Transcript([{"start": 0, "end": 2, "text": "oi"}], "pt", [])
+        return Transcript()  # transcribe() devolve vazio quando Groq e local falham
+
+    with pytest.raises(RuntimeError, match="pedaço 2"):
+        await transcribe_long(tmp_path / "a.mp3", "k", None, tmp_path, transcribe_fn=fake,
+                              split=split, chunk_s=100)
