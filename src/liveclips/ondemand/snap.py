@@ -1,6 +1,8 @@
 """Bordas do corte: começa e termina em frase/pausa, nunca no meio de uma palavra."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 PAUSE = 0.5
@@ -56,13 +58,16 @@ def extend_past_reaction(end: float, words: list[dict], rms_db: np.ndarray | Non
     até 6 s e sem invadir a próxima palavra."""
     if rms_db is None or rms_db.size == 0:
         return end
-    next_start = next((w["start"] for w in words if w["start"] > end + 0.01),
+    next_start = next((w["start"] for w in words
+                       if w["start"] >= end - 1e-6 and w["end"] > end + 1e-6),
                       end + REACTION_MAX)
+    if next_start - end < 0.05:  # a próxima palavra já começa: nada a estender
+        return end
     limit = min(end + REACTION_MAX, next_start - 0.05, float(rms_db.size))
     i0 = int(end)
     base = float(np.median(rms_db[max(0, i0 - 45): i0 + 45]))
     t = end
-    sec = i0
+    sec = math.ceil(end)  # o segundo que ainda contém a fala não conta
     while sec < limit and sec < rms_db.size and rms_db[sec] > base + 3:
         t = min(limit, sec + 1.0)
         sec += 1

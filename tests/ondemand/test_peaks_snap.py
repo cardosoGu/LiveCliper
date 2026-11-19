@@ -66,3 +66,19 @@ def test_reaction_extends_end_until_volume_drops():
 def test_sentences_group_words():
     sents = sentences(make_words(n_sentences=2))
     assert len(sents) == 2 and sents[0][2].endswith(".")
+
+
+def test_reaction_never_enters_contiguous_next_word():
+    words = [{"word": "olha.", "start": 0.0, "end": 10.0},
+             {"word": "entao", "start": 10.0, "end": 10.6}]
+    rms = np.full(60, -30.0)
+    rms[10:20] = -18.0
+    assert extend_past_reaction(10.0, words, rms) == 10.0
+
+
+def test_reaction_does_not_stretch_end_without_laughter():
+    words = [{"word": "olha.", "start": 0.0, "end": 10.4},
+             {"word": "depois", "start": 30.0, "end": 30.5}]
+    rms = np.full(60, -30.0)
+    rms[10] = -15.0  # ainda é a fala que acabou de terminar
+    assert extend_past_reaction(10.4, words, rms) == 10.4
