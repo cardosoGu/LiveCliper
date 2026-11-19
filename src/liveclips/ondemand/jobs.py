@@ -104,6 +104,10 @@ class OnDemandRunner:
                 self.db.update_job(j["id"], state="queued")
 
     # --- etapas -------------------------------------------------------------
+    def _live_http(self, source) -> dict:
+        """Live do YouTube baixa fragmentos por HTTP: passa o cliente compartilhado."""
+        return {"http": self.http} if source.live else {}
+
     async def _progress(self, job: dict, step: str, text: str) -> None:
         self.db.update_job(job["id"], step=step, progress=text)
         job = self.db.get_job(job["id"])
@@ -189,7 +193,8 @@ class OnDemandRunner:
             windowed = meta.is_live or source.start > 0
             path = await self.ops.download_audio(
                 source.url, path, start=source.start if windowed else None,
-                end=source.end if windowed else None, live=source.live)
+                end=source.end if windowed else None, live=source.live,
+                **self._live_http(source))
         return path
 
     async def _transcript(self, job, work, audio):
@@ -274,7 +279,8 @@ class OnDemandRunner:
         """Baixa o trecho, gera legenda/transcrição e só então libera para o pipeline."""
         folder = self.media_dir / str(c.id)
         raw = await self.ops.download_section(
-            source.url, source.start + s, source.start + e, folder / "raw.mp4", live=source.live)
+            source.url, source.start + s, source.start + e, folder / "raw.mp4", live=source.live,
+            **self._live_http(source))
         words = [{**w, "start": w["start"] - s, "end": w["end"] - s}
                  for w in transcript.words if w["start"] >= s and w["end"] <= e]
         cues = build_cues(words)

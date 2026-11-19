@@ -5,10 +5,13 @@ import asyncio
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
+
+import httpx
 
 from ..processing.ffmpeg import MediaError, run
 
@@ -105,17 +108,31 @@ async def probe(url: str, run=run) -> VideoMeta:
     return parse_metadata(json.loads(out), url)
 
 
+@asynccontextmanager
+async def _client(http: httpx.AsyncClient | None):
+    if http is not None:
+        yield http
+        return
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+        yield c
+
+
 async def download_audio(url: str, dest: Path, run=run, start: float | None = None,
-                         end: float | None = None, live: bool = False) -> Path:
+                         end: float | None = None, live: bool = False,
+                         http: httpx.AsyncClient | None = None) -> Path:
     """Só o áudio, já em MP3 mono 16 kHz 48 kbps (o formato que a transcrição usa).
 
-    Com start/end baixa só essa janela (segundos); com live=True usa --live-from-start."""
+    Com start/end baixa só essa janela (segundos); com live=True (YouTube) baixa os
+    fragmentos numerados da live a partir do início (o yt-dlp não corta esse caso)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if live:
+        from . import ytlive
+        async with _client(http) as c:
+            return await ytlive.download_live_audio(url, dest, start or 0.0, end or 0.0, c,
+                                                    run=run)
     opts: list[str] = []
     if start is not None and end is not None:
         opts += ["--download-sections", f"*{start:.2f}-{end:.2f}"]
-    if live:
-        opts.append("--live-from-start")
     await run(*_yt("yt-dlp", "--no-playlist", "--quiet", "-f", "bestaudio/best", "-x",
               "--audio-format", "mp3", "--audio-quality", "48K", "--postprocessor-args",
               "ffmpeg:-ac 1 -ar 16000 -b:a 48k", *opts,
@@ -127,13 +144,16 @@ async def download_audio(url: str, dest: Path, run=run, start: float | None = No
 
 
 async def download_section(url: str, start: float, end: float, dest: Path, run=run,
-                           live: bool = False) -> Path:
+                           live: bool = False, http: httpx.AsyncClient | None = None) -> Path:
     """Baixa só o trecho [start, end] (em segundos), até 1080p."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if live:
+        from . import ytlive
+        async with _client(http) as c:
+            return await ytlive.download_live_section(url, start, end, dest, c, run=run)
     await run(*_yt("yt-dlp", "--no-playlist", "--quiet",
               "-f", "bv*[height<=1080]+ba/b[height<=1080]/best",
               "--download-sections", f"*{start:.2f}-{end:.2f}", "--force-keyframes-at-cuts",
-              *(["--live-from-start"] if live else []),
               "--merge-output-format", "mp4", "-o", str(dest), "--", url), timeout=900)
     if not dest.exists():
         raise MediaError("download do trecho não gerou arquivo")

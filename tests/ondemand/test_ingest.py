@@ -140,7 +140,7 @@ def test_live_start_is_read_only_for_lives():
     assert parse_metadata(info(release_timestamp=9), "u").live_start is None
 
 
-async def test_window_and_live_flags_in_downloads(tmp_path):
+async def test_window_flags_and_live_delegates_to_ytlive(tmp_path, monkeypatch):
     calls = []
 
     async def run(*cmd, timeout=300):
@@ -149,10 +149,27 @@ async def test_window_and_live_flags_in_downloads(tmp_path):
         out.write_bytes(b"x")
         return ""
 
-    await download_audio("u", tmp_path / "a.mp3", run=run, start=0, end=7200.5, live=True)
-    assert "*0.00-7200.50" in calls[-1] and "--live-from-start" in calls[-1]
+    await download_audio("u", tmp_path / "a.mp3", run=run, start=0, end=7200.5)
+    assert "*0.00-7200.50" in calls[-1] and "--live-from-start" not in calls[-1]
     await download_audio("u", tmp_path / "b.mp3", run=run)
     assert "--download-sections" not in calls[-1] and "--live-from-start" not in calls[-1]
-    await download_section("u", 10, 40, tmp_path / "raw.mp4", run=run, live=True)
-    assert "--live-from-start" in calls[-1]
-    assert calls[-1][-2:] == ("--", "u")
+
+    from liveclips.ondemand import ytlive
+    seen = []
+
+    async def fake_audio(url, dest, s, e, http, run=None):
+        seen.append(("audio", url, s, e, http))
+        return dest
+
+    async def fake_section(url, s, e, dest, http, run=None):
+        seen.append(("section", url, s, e, http))
+        return dest
+
+    monkeypatch.setattr(ytlive, "download_live_audio", fake_audio)
+    monkeypatch.setattr(ytlive, "download_live_section", fake_section)
+    n = len(calls)
+    sentinel = object()
+    await download_audio("u", tmp_path / "c.mp3", run=run, start=0, end=60, live=True, http=sentinel)
+    await download_section("u", 10, 40, tmp_path / "raw.mp4", run=run, live=True, http=sentinel)
+    assert len(calls) == n  # nenhum yt-dlp de download
+    assert seen == [("audio", "u", 0, 60, sentinel), ("section", "u", 10, 40, sentinel)]

@@ -45,12 +45,12 @@ def make(db, tmp_path, meta=None, topics_exc=None, calls=None):
         return meta or VideoMeta(url, "Podpah #1", "Podpah", "youtube", 600.0, False, None, "x",
                                   "Podpah")
 
-    async def download_audio(url, dest, start=None, end=None, live=False):
+    async def download_audio(url, dest, start=None, end=None, live=False, http=None):
         calls.append(("audio", start, end, live))
         dest.write_bytes(b"a")
         return dest
 
-    async def download_section(url, s, e, dest, live=False):
+    async def download_section(url, s, e, dest, live=False, http=None):
         calls.append(("section", s, e, live))
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"v")
@@ -234,7 +234,7 @@ async def test_orphan_cut_is_retried_and_reused(db, tmp_path):
     r, notes, calls = make(db, tmp_path)
     good = r.ops.download_section
 
-    async def boom(url, s, e, dest, live=False):
+    async def boom(url, s, e, dest, live=False, http=None):
         raise RuntimeError("download caiu")
 
     r.ops.download_section = boom
