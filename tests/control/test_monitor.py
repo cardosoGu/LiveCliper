@@ -42,8 +42,7 @@ class Clock:
 def make_monitor(db, pubs=None):
     t = FakeTransport()
     clock = Clock()
-    m = Monitor(db, t, pubs or {}, load_settings({}), channel_count=lambda: 42, clock=clock,
-                chat_summary=lambda: "chat: 200/200 canais, 120 msgs/min no total")
+    m = Monitor(db, t, pubs or {}, load_settings({}), clock=clock)
     return m, t, clock
 
 
@@ -51,24 +50,21 @@ def test_pause_resume_and_status(db):
     m, _, _ = make_monitor(db)
     assert "pausadas" in m.handle_command("pause")
     assert db.kv_get("paused") == "1"
-    assert "pausado" in m.handle_command("/status") and "42" in m.handle_command("status")
-    assert "120 msgs/min" in m.handle_command("status")
+    assert "pausado" in m.handle_command("/status")
+    status = m.handle_command("status")
+    assert "Lives monitoradas" not in status and "bloqueados" not in status
     m.handle_command("resume")
     assert db.kv_get("paused") == "0"
 
 
-def test_block_unblock_and_min_score(db):
+def test_min_score_and_help(db):
     m, _, _ = make_monitor(db)
-    assert "Uso" in m.handle_command("block")
-    m.handle_command("block", "Gaules")
-    assert db.is_blocked("gaules")
-    m.handle_command("unblock", "gaules")
-    assert not db.is_blocked("gaules")
     assert "8.5" in m.handle_command("min_score", "8,5")
     assert db.kv_get("min_score") == "8.5"
     assert "entre 0 e 10" in m.handle_command("min_score", "11")
     assert "Uso" in m.handle_command("min_score", "abc")
     assert "Comandos" in m.handle_command("xyz")
+    assert "/testar" not in m.handle_command("xyz") and "/block" not in m.handle_command("xyz")
 
 
 async def test_delete_action_uses_publisher_and_marks_deleted(db):
@@ -82,12 +78,6 @@ async def test_delete_action_uses_publisher_and_marks_deleted(db):
     assert pub.deleted == ["m1"]
     assert "instagram: apagado" in msg and "tiktok: apague manualmente" in msg
     assert db.get(c.id).state is State.DELETED
-
-
-async def test_block_action(db):
-    m, _, _ = make_monitor(db)
-    assert "bloqueado" in await m.handle_action("block:loud")
-    assert db.is_blocked("loud")
 
 
 async def test_alert_dedups_for_10_minutes(db):
@@ -108,7 +98,7 @@ async def test_post_published_has_buttons(db):
     await m.flush()
     text, buttons = t.sent[0]
     assert "twitch.tv/gaules" in text and "https://ig/m1" in text
-    assert buttons == [("🗑️ Apagar post", f"del:{c.id}"), ("🚫 Bloquear canal", "block:gaules")]
+    assert buttons == [("🗑️ Apagar post", f"del:{c.id}")]
 
 
 async def test_sending_never_blocks_the_caller(db):

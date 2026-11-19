@@ -16,7 +16,7 @@ from .approval import ApprovalDesk, approval_custom_id, parse_custom_id
 from .channels import ensure_channels
 from .monitor import Monitor
 from .panel import (INTERVAL_OPTIONS, LIMIT_OPTIONS, PLATFORM_LABEL as PANEL_LABEL,
-                    SCORE_OPTIONS, VIEWER_OPTIONS, Panel, PanelState)
+                    SCORE_OPTIONS, Panel, PanelState)
 
 log = logging.getLogger(__name__)
 
@@ -34,40 +34,15 @@ def parse_link_message(text: str) -> tuple[str, str] | None:
 
 def build_panel_view(s: PanelState) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    if s.auto_on and not s.auto_running:
-        auto_label, auto_style = "📡 Automático: ⚠️ aguardando Twitch", discord.ButtonStyle.secondary
-    elif s.auto_on:
-        auto_label, auto_style = "📡 Automático: LIGADO", discord.ButtonStyle.success
-    else:
-        auto_label, auto_style = "📡 Automático: DESLIGADO", discord.ButtonStyle.secondary
-    view.add_item(discord.ui.Button(label=auto_label, custom_id="panel:auto",
-                                    style=auto_style, row=0))
     view.add_item(discord.ui.Button(label="▶ Retomar" if s.paused else "⏸ Pausar",
                                     custom_id="panel:pause", style=discord.ButtonStyle.secondary,
                                     row=0))
-    view.add_item(discord.ui.Button(label="➕ Categoria", custom_id="panel:addcat",
-                                    style=discord.ButtonStyle.secondary, row=0))
-    known = s.known[:25]  # limite do Discord por seletor
-    options = [discord.SelectOption(label=n[:100], value=n[:100], default=n in s.selected)
-               for n in known]
-    if options:
-        view.add_item(discord.ui.Select(
-            custom_id="panel:cats", placeholder="Categorias do automático", row=1,
-            min_values=1, max_values=len(options), options=options))
-    else:
-        view.add_item(discord.ui.Select(
-            custom_id="panel:cats", placeholder="Nenhuma categoria — use ➕ Categoria", row=1,
-            disabled=True, options=[discord.SelectOption(label="(vazio)", value="-")]))
     view.add_item(discord.ui.Select(
-        custom_id="panel:viewers", row=2,
-        options=[discord.SelectOption(label=f"mín. {v} espectadores", value=str(v),
-                                      default=v == s.min_viewers) for v in VIEWER_OPTIONS]))
-    view.add_item(discord.ui.Select(
-        custom_id="panel:score", row=3,
+        custom_id="panel:score", row=1,
         options=[discord.SelectOption(label=f"nota mínima {v}", value=str(v),
                                       default=float(v) == s.min_score) for v in SCORE_OPTIONS]))
     view.add_item(discord.ui.Select(
-        custom_id="panel:pace", row=4,
+        custom_id="panel:pace", row=2,
         options=[discord.SelectOption(label=f"a cada {i} min · até {lim}/dia", value=f"{i}|{lim}",
                                       default=(i, lim) == (s.interval, s.limit))
                  for i in INTERVAL_OPTIONS for lim in LIMIT_OPTIONS]))
@@ -261,9 +236,6 @@ class DiscordBot:
             return
         if custom_id.startswith("panel:") and self.panel is not None:
             action = custom_id.removeprefix("panel:")
-            if action == "addcat":
-                await interaction.response.send_modal(AddCategoryModal(self))
-                return
             await interaction.response.defer(ephemeral=True, thinking=True)
             try:
                 msg = await self.panel.handle(action, list((interaction.data or {}).get("values", [])))
@@ -335,28 +307,6 @@ class DiscordBot:
         async def status(interaction: discord.Interaction):
             await reply(interaction, "status")
 
-        @self.tree.command(name="testar",
-                           description="Força um clipe agora e mostra a prévia com a nota da IA "
-                                       "(não publica)")
-        @app_commands.describe(canal="login de um canal (opcional; padrão: a live mais ativa)")
-        async def testar(interaction: discord.Interaction, canal: str | None = None):
-            if interaction.user.id != bot.admin_user_id:
-                await interaction.response.send_message("Sem permissão.", ephemeral=True)
-                return
-            await interaction.response.defer(thinking=True)
-            result = await bot.monitor.run_test(canal)
-            await interaction.followup.send(result[:2000])
-
-        @self.tree.command(name="block", description="Bloqueia um canal")
-        @app_commands.describe(canal="login do canal na Twitch/Kick")
-        async def block(interaction: discord.Interaction, canal: str):
-            await reply(interaction, "block", canal)
-
-        @self.tree.command(name="unblock", description="Desbloqueia um canal")
-        @app_commands.describe(canal="login do canal na Twitch/Kick")
-        async def unblock(interaction: discord.Interaction, canal: str):
-            await reply(interaction, "unblock", canal)
-
         @self.tree.command(name="min_score", description="Define a nota mínima da IA (0 a 10)")
         @app_commands.describe(nota="ex.: 7.5")
         async def min_score(interaction: discord.Interaction, nota: float):
@@ -405,30 +355,6 @@ class EditModal(discord.ui.Modal, title="Editar clipe"):
         except Exception as e:
             log.exception("salvar edição do clipe %s falhou", self.candidate_id)
             msg = f"Erro ao salvar: {e}"
-        await interaction.followup.send(msg[:2000], ephemeral=True)
-
-
-class AddCategoryModal(discord.ui.Modal, title="Adicionar categoria"):
-    def __init__(self, bot: "DiscordBot"):
-        super().__init__(timeout=600)
-        self.bot = bot
-        self.name = discord.ui.TextInput(label="Nome exato da categoria na Twitch",
-                                         max_length=100, placeholder="Grand Theft Auto VI")
-        self.add_item(self.name)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            msg = await self.bot.panel.handle("addcat", [str(self.name.value)])
-        except Exception as e:
-            log.exception("adicionar categoria falhou")
-            msg = f"Erro: {e}"
-        else:
-            try:
-                await self.bot.refresh_panel()
-            except Exception:
-                log.exception("painel não atualizado após adicionar categoria")
-                msg += " (painel não atualizado)"
         await interaction.followup.send(msg[:2000], ephemeral=True)
 
 

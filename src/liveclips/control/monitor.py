@@ -17,8 +17,7 @@ from .runtime import PLATFORMS, RuntimeSettings
 
 log = logging.getLogger(__name__)
 
-HELP = ("Comandos: /pause · /resume · /status · /testar [canal] · /block canal · "
-        "/unblock canal · /min_score N · /plataforma nome on|off")
+HELP = "Comandos: /pause · /resume · /status · /min_score N · /plataforma nome on|off"
 OUTBOX_MAX = 200
 
 
@@ -40,17 +39,13 @@ class LogTransport:
 class Monitor:
     def __init__(self, db: DB, transport: Transport, publishers_by_name: dict, cfg: Settings,
                  runtime: RuntimeSettings | None = None,
-                 channel_count: Callable[[], int] = lambda: 0, now_fn=utcnow,
-                 chat_summary: Callable[[], str] = lambda: "",
+                 now_fn=utcnow,
                  clock: Callable[[], float] = time.monotonic):
         self.db = db
         self.transport = transport
         self.publishers = publishers_by_name
         self.cfg = cfg
         self.runtime = runtime or RuntimeSettings(db, cfg)
-        self.channel_count = channel_count
-        self.chat_summary = chat_summary
-        self.tester = None  # ManualTester, ligado no main depois que o pipeline existe
         self.now_fn = now_fn
         self.clock = clock
         self._last_alert: dict[str, float] = {}
@@ -79,20 +74,6 @@ class Monitor:
                 await self.transport.send(text, buttons)
         except Exception as e:
             log.warning("falha ao enviar aviso: %s", e)
-
-    async def run_test(self, channel: str | None = None) -> str:
-        """/testar: o resultado vem como texto; a prévia em vídeo segue pela fila."""
-        if self.tester is None:
-            return "Teste indisponível (Twitch não configurada)."
-        try:
-            result = await self.tester.run(channel)
-        except Exception as e:
-            log.exception("teste manual falhou")
-            return f"🧪 O teste falhou: {type(e).__name__}: {e}"[:1900]
-        if result.preview_path is not None:
-            self._enqueue(("file", str(result.preview_path), result.text))
-            return "🧪 Teste concluído. A prévia com a nota da IA vem na próxima mensagem."
-        return result.text
 
     async def run_sender(self) -> None:
         while True:
@@ -125,7 +106,7 @@ class Monitor:
             lines = [f"❌ **Falhou ao publicar** · {credit_text(c.platform, c.channel)}"]
         if errors:
             lines.append("Falhas: " + "; ".join(errors))
-        buttons = [("🗑️ Apagar post", f"del:{c.id}"), ("🚫 Bloquear canal", f"block:{c.channel}")]
+        buttons = [("🗑️ Apagar post", f"del:{c.id}")]
         await self._send("\n".join(lines), buttons if results else None)
 
     def status_text(self) -> str:
@@ -140,14 +121,11 @@ class Monitor:
         return "\n".join([
             f"**Status:** {'⏸️ pausado' if paused else '▶️ ativo'}",
             f"Plataformas: {', '.join(p for p in PLATFORMS if self.runtime.platform_enabled(p)) or 'nenhuma ligada'}",
-            f"Lives monitoradas: {self.channel_count()}",
-            *([s] if (s := self.chat_summary()) else []),
             f"Última hora: {last_hour}",
             f"Posts hoje: {self.db.publications_count_since(local_midnight_utc(now))}",
             f"Avaliações de IA hoje: {evals}/{self.cfg.ai_daily_budget}",
             f"Gasto Claude hoje: US$ {spend:.2f} / {self.cfg.claude_daily_budget_usd:.2f}",
             f"Nota mínima: {min_score}",
-            f"Canais bloqueados: {len(self.db.blocked_channels())}",
         ])
 
     def handle_command(self, name: str, arg: str | None = None) -> str:
@@ -161,14 +139,6 @@ class Monitor:
             return "▶️ Publicações retomadas."
         if name == "status":
             return self.status_text()
-        if name in ("block", "unblock"):
-            if not arg:
-                return f"Uso: /{name} nome_do_canal"
-            if name == "block":
-                self.db.block(arg, "discord")
-                return f"🚫 {arg.lower()} bloqueado."
-            self.db.unblock(arg)
-            return f"✅ {arg.lower()} desbloqueado."
         if name == "min_score":
             try:
                 value = float((arg or "").replace(",", "."))
@@ -189,9 +159,6 @@ class Monitor:
 
     async def handle_action(self, custom_id: str) -> str:
         kind, _, value = custom_id.partition(":")
-        if kind == "block" and value:
-            self.db.block(value, "discord")
-            return f"🚫 {value} bloqueado."
         if kind == "del" and value.isdigit():
             c = self.db.get(int(value))
             if c is None:

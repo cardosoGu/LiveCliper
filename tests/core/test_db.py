@@ -50,14 +50,6 @@ def test_last_publication_and_count(db):
     assert len(db.publications_for(c2.id)) == 2
 
 
-def test_blocklist_is_case_insensitive(db):
-    db.block("Gaules", "teste")
-    assert db.is_blocked("gaules")
-    assert db.blocked_channels() == {"gaules"}
-    db.unblock("GAULES")
-    assert not db.is_blocked("gaules")
-
-
 def test_kv_and_incr(db):
     assert db.kv_get("x") is None
     assert db.kv_get("x", "d") == "d"

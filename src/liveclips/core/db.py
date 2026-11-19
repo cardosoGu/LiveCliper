@@ -1,4 +1,4 @@
-"""Persistência em SQLite: candidatos, publicações, blocklist e um kv simples."""
+"""Persistência em SQLite: candidatos, publicações, jobs e um kv simples."""
 from __future__ import annotations
 
 import sqlite3
@@ -26,9 +26,6 @@ CREATE TABLE IF NOT EXISTS publications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   candidate_id INTEGER NOT NULL, platform TEXT NOT NULL,
   post_id TEXT, url TEXT, published_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS blocklist (
-  channel TEXT PRIMARY KEY, reason TEXT, added_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs (
@@ -257,27 +254,6 @@ class DB:
             " ORDER BY p.published_at DESC, p.id DESC LIMIT 1"
         ).fetchone()
         return (parse_iso(row["published_at"]), row["channel"]) if row else None
-
-    # --- blocklist --------------------------------------------------------
-    def block(self, channel: str, reason: str = "") -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO blocklist (channel, reason, added_at) VALUES (?,?,?)",
-            (channel.lower(), reason, utcnow().isoformat()),
-        )
-        self.conn.commit()
-
-    def unblock(self, channel: str) -> None:
-        self.conn.execute("DELETE FROM blocklist WHERE channel=?", (channel.lower(),))
-        self.conn.commit()
-
-    def is_blocked(self, channel: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM blocklist WHERE channel=?", (channel.lower(),)
-        ).fetchone()
-        return row is not None
-
-    def blocked_channels(self) -> set[str]:
-        return {r["channel"] for r in self.conn.execute("SELECT channel FROM blocklist")}
 
     # --- kv ---------------------------------------------------------------
     def kv_get(self, key: str, default: str | None = None) -> str | None:
