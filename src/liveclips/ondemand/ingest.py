@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 from ..processing.ffmpeg import MediaError, run
 
@@ -26,6 +27,26 @@ class VideoMeta:
     is_live: bool
     heatmap: list[dict] | None
     video_id: str
+    credit_hint: str = ""  # só o que vai depois do host: "Podpah", "channel/UC…" ou o domínio
+
+
+def _url_path(url: str | None) -> str:
+    return urlparse(url or "").path.strip("/")
+
+
+def _credit_hint(info: dict, platform: str, url: str, fallback: str) -> str:
+    if platform == "youtube":
+        uid = str(info.get("uploader_id") or "")
+        if uid.startswith("@"):
+            return uid[1:]
+        for key in ("channel_url", "uploader_url"):
+            path = _url_path(info.get(key))
+            if path:
+                return path[1:] if path.startswith("@") else path
+        return ""  # sem handle nem canal confiável: o crédito não inventa um
+    if platform == "outro":
+        return (urlparse(url).hostname or "").removeprefix("www.")
+    return str(info.get("uploader_id") or fallback)
 
 
 def parse_metadata(info: dict, url: str) -> VideoMeta:
@@ -35,7 +56,8 @@ def parse_metadata(info: dict, url: str) -> VideoMeta:
     return VideoMeta(url=url, title=info.get("title") or "", channel=str(channel),
                      platform=platform, duration=float(info.get("duration") or 0),
                      is_live=bool(info.get("is_live")), heatmap=info.get("heatmap") or None,
-                     video_id=str(info.get("id") or ""))
+                     video_id=str(info.get("id") or ""),
+                     credit_hint=_credit_hint(info, platform, url, str(channel)))
 
 
 async def probe(url: str, run=run) -> VideoMeta:

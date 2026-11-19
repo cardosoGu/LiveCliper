@@ -41,7 +41,8 @@ def make(db, tmp_path, meta=None, topics_exc=None, calls=None):
 
     async def probe(url):
         calls.append("probe")
-        return meta or VideoMeta(url, "Podpah #1", "Podpah", "youtube", 600.0, False, None, "x")
+        return meta or VideoMeta(url, "Podpah #1", "Podpah", "youtube", 600.0, False, None, "x",
+                                  "Podpah")
 
     async def download_audio(url, dest):
         calls.append("audio")
@@ -95,6 +96,27 @@ async def test_happy_path_creates_ready_candidates(db, tmp_path):
     assert raw.parent.name == str(c.id) and raw.exists()
     assert (raw.parent / "subs.ass").exists() and c.transcript
     assert any("recortando" in t for _, t in notes.progress)
+
+
+async def test_candidate_credit_uses_handle_or_honest_fallback(db, tmp_path):
+    named = VideoMeta("u", "Ep", "Inteligência Ltda", "youtube", 600.0, False, None, "x", "Podpah")
+    r, _, _ = make(db, tmp_path, meta=named)
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    [c] = db.job_candidates(jid)
+    assert (c.platform, c.channel) == ("youtube", "Podpah")
+    unknown = VideoMeta("u", "Ep", "Inteligência Ltda", "youtube", 600.0, False, None, "x")
+    r2, _, _ = make(db, tmp_path / "b", meta=unknown)
+    jid2 = r2.enqueue("u", "", None, None)
+    await r2.process(db.get_job(jid2))
+    [c2] = db.job_candidates(jid2)
+    assert (c2.platform, c2.channel) == ("outro", "youtube.com")
+    other = VideoMeta("u", "Ep", "X", "outro", 600.0, False, None, "x", "vimeo.com")
+    r3, _, _ = make(db, tmp_path / "c", meta=other)
+    jid3 = r3.enqueue("u", "", None, None)
+    await r3.process(db.get_job(jid3))
+    [c3] = db.job_candidates(jid3)
+    assert (c3.platform, c3.channel) == ("outro", "vimeo.com")
 
 
 async def test_steps_are_cached_between_runs(db, tmp_path):

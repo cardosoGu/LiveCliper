@@ -23,6 +23,22 @@ def test_parse_metadata_detects_platform():
     assert parse_metadata(info(channel=None, uploader="Fulano"), "u").channel == "Fulano"
 
 
+def test_parse_metadata_credit_hint():
+    yt = parse_metadata(info(channel="Inteligência Ltda", uploader_id="@Podpah"), "u")
+    assert yt.channel == "Inteligência Ltda" and yt.credit_hint == "Podpah"
+    uc = parse_metadata(info(uploader_id=None,
+                             channel_url="https://www.youtube.com/channel/UCabc_123"), "u")
+    assert uc.credit_hint == "channel/UCabc_123"
+    handle_url = parse_metadata(info(uploader_id=None,
+                                     channel_url="https://www.youtube.com/@Flow"), "u")
+    assert handle_url.credit_hint == "Flow"
+    assert parse_metadata(info(uploader_id=None, channel_url=None), "u").credit_hint == ""
+    tw = parse_metadata(info(extractor_key="TwitchVod", uploader_id="gaules"), "u")
+    assert tw.credit_hint == "gaules"
+    out = parse_metadata(info(extractor_key="Vimeo"), "https://www.vimeo.com/123")
+    assert (out.platform, out.credit_hint) == ("outro", "vimeo.com")
+
+
 async def test_probe_and_downloads_build_yt_dlp_commands(tmp_path):
     calls = []
 

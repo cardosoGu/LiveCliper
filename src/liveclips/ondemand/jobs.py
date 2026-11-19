@@ -234,9 +234,12 @@ class OnDemandRunner:
         return made
 
     def _new_candidate(self, job, meta, clip_id, s, e) -> Candidate:
-        return Candidate(platform=meta.platform if meta.platform != "outro" else "youtube",
+        platform, channel = meta.platform, meta.credit_hint or meta.channel
+        if platform == "youtube" and not meta.credit_hint:
+            platform, channel = "outro", "youtube.com"  # sem handle: o crédito não inventa um
+        return Candidate(platform=platform,
                          source="ondemand", clip_id=clip_id, clip_url=job["url"],
-                         channel=meta.channel, created_at=self.now_fn(), duration=e - s,
+                         channel=channel, created_at=self.now_fn(), duration=e - s,
                          title=meta.title, rank=1000.0, state=State.FAILED,
                          reason=CUTTING_REASON, job_id=job["id"], start_s=s, end_s=e)
 
