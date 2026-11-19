@@ -14,6 +14,37 @@ from ..processing.ffmpeg import MediaError, run
 
 log = logging.getLogger(__name__)
 
+# Cookies de uma conta do YouTube (formato Netscape), para vídeos com restrição de idade
+# ou quando o YouTube pede "confirme que você não é um robô". O main aponta para
+# <DATA_DIR>/youtube-cookies.txt; o arquivo é lido a cada chamada (não precisa reiniciar).
+COOKIES_FILE: Path | None = None
+
+_FRIENDLY = [
+    ("confirm your age", "vídeo com restrição de idade: o YouTube exige login. Coloque os "
+     "cookies de uma conta do YouTube em data/youtube-cookies.txt e mande o link de novo"),
+    ("not a bot", "o YouTube pediu para confirmar que não é um robô. Coloque os cookies de "
+     "uma conta do YouTube em data/youtube-cookies.txt e mande o link de novo"),
+    ("private video", "vídeo privado: só dá para cortar vídeos públicos ou não listados"),
+    ("members-only", "vídeo só para membros do canal"),
+    ("video unavailable", "vídeo indisponível (removido, bloqueado ou link errado)"),
+    ("unsupported url", "link não suportado: use YouTube, VOD da Twitch ou da Kick"),
+]
+
+
+def friendly_error(text: str) -> str | None:
+    """Erro do yt-dlp em português, quando é um caso conhecido."""
+    low = text.lower()
+    return next((msg for key, msg in _FRIENDLY if key in low), None)
+
+
+def _yt(*args: str) -> tuple[str, ...]:
+    """Comando do yt-dlp com os cookies (se o arquivo existir) antes do "--" e do link."""
+    if COOKIES_FILE is not None and Path(COOKIES_FILE).exists():
+        i = args.index("--")
+        return (*args[:i], "--cookies", str(COOKIES_FILE), *args[i:])
+    return args
+
+
 REACTION = re.compile(r"(k{3,}|rs{2,}|hah|hue|\bmds\b|pqp|caralho|nossa|😂|🤣|\blul\b|kekw|"
                       r"omegalul)", re.IGNORECASE)
 
@@ -62,17 +93,18 @@ def parse_metadata(info: dict, url: str) -> VideoMeta:
 
 
 async def probe(url: str, run=run) -> VideoMeta:
-    out = await run("yt-dlp", "-J", "--no-playlist", "--no-warnings", "--", url, timeout=120)
+    out = await run(*_yt("yt-dlp", "-J", "--no-playlist", "--no-warnings", "--", url),
+                    timeout=120)
     return parse_metadata(json.loads(out), url)
 
 
 async def download_audio(url: str, dest: Path, run=run) -> Path:
     """Só o áudio, já em MP3 mono 16 kHz 48 kbps (o formato que a transcrição usa)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    await run("yt-dlp", "--no-playlist", "--quiet", "-f", "bestaudio/best", "-x",
+    await run(*_yt("yt-dlp", "--no-playlist", "--quiet", "-f", "bestaudio/best", "-x",
               "--audio-format", "mp3", "--audio-quality", "48K", "--postprocessor-args",
               "ffmpeg:-ac 1 -ar 16000 -b:a 48k",
-              "-o", str(dest.with_suffix(".%(ext)s")), "--", url, timeout=3600)
+              "-o", str(dest.with_suffix(".%(ext)s")), "--", url), timeout=3600)
     out = dest.with_suffix(".mp3")
     if not out.exists():
         raise MediaError("download do áudio não gerou arquivo")
@@ -82,10 +114,10 @@ async def download_audio(url: str, dest: Path, run=run) -> Path:
 async def download_section(url: str, start: float, end: float, dest: Path, run=run) -> Path:
     """Baixa só o trecho [start, end] (em segundos), até 1080p."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    await run("yt-dlp", "--no-playlist", "--quiet",
+    await run(*_yt("yt-dlp", "--no-playlist", "--quiet",
               "-f", "bv*[height<=1080]+ba/b[height<=1080]/best",
               "--download-sections", f"*{start:.2f}-{end:.2f}", "--force-keyframes-at-cuts",
-              "--merge-output-format", "mp4", "-o", str(dest), "--", url, timeout=900)
+              "--merge-output-format", "mp4", "-o", str(dest), "--", url), timeout=900)
     if not dest.exists():
         raise MediaError("download do trecho não gerou arquivo")
     return dest
@@ -124,9 +156,8 @@ def _parse_chat_file(path: Path) -> list[float]:
 async def fetch_youtube_chat(url: str, work_dir: Path, run=run) -> list[float]:
     """Chat do replay (só YouTube). Sem chat ou com erro: lista vazia (o sinal é opcional)."""
     try:
-        await run("yt-dlp", "--no-playlist", "--quiet", "--skip-download", "--write-subs",
-                  "--sub-langs", "live_chat", "-o", str(work_dir / "chat"), "--", url,
-                  timeout=1800)
+        await run(*_yt("yt-dlp", "--no-playlist", "--quiet", "--skip-download", "--write-subs",
+                  "--sub-langs", "live_chat", "-o", str(work_dir / "chat"), "--", url), timeout=1800)
         path = work_dir / "chat.live_chat.json"
         if not path.exists():
             return []

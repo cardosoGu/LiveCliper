@@ -85,3 +85,14 @@ O TikTok também aceita `TIKTOK_MODE=draft`: o vídeo vai como rascunho no app d
 - Teste 1 publicação real: ligue a plataforma com `/plataforma` no Discord (`DRY_RUN=0`), `docker compose up -d`, espere 1 post e apague pelo botão 🗑️ no Discord.
 - Quarta ~23:30: `TWITCH_GAME_NAME=Grand Theft Auto VI`, plataformas ligadas via `/plataforma`, `docker compose up -d`, e confira `/status`.
 - Emergência: `/pause` no Discord.
+
+### Vídeos com restrição de idade (ou "confirme que não é um robô")
+
+Alguns vídeos do YouTube (muita gameplay de GTA, por exemplo) exigem login. Para esses:
+
+1. Num navegador logado numa conta do YouTube (de preferência uma conta secundária), instale
+   uma extensão que exporte cookies no formato Netscape (ex.: "Get cookies.txt LOCALLY").
+2. Abra youtube.com, exporte os cookies e salve como `data/youtube-cookies.txt`.
+3. Mande o link de novo. Não precisa reiniciar o app.
+
+O arquivo dá acesso à conta: não compartilhe e não suba para o Git (a pasta `data/` já é ignorada).

@@ -148,7 +148,8 @@ class OnDemandRunner:
             return
         except Exception as e:
             log.exception("job %s falhou", jid)
-            await self._finish(job, False, f"erro: {str(e)[:300]}", "failed")
+            msg = ingest.friendly_error(str(e)) or f"erro: {str(e)[:300]}"
+            await self._finish(job, False, msg, "failed")
             return
         if made == 0:
             await self._finish(job, True, "nenhum momento forte encontrado neste vídeo", "done")

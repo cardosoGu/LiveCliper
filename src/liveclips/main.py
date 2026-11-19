@@ -120,6 +120,9 @@ async def amain() -> None:
             job_notifier = DiscordJobNotifier(bot)
         else:
             job_notifier = LogJobNotifier()
+        from .ondemand import ingest as ondemand_ingest
+
+        ondemand_ingest.COOKIES_FILE = data / "youtube-cookies.txt"  # opcional
         ondemand = OnDemandRunner(db, cfg, http, data / "jobs", media_dir, job_notifier)
         if bot is not None:
             bot.attach_ondemand(ondemand)

@@ -101,3 +101,33 @@ async def test_fetch_youtube_chat_parses_in_a_thread(tmp_path):
     finally:
         ingest.parse_live_chat = real
     assert seen and seen[0] is not threading.main_thread()
+
+
+async def test_cookies_file_is_used_when_present(tmp_path, monkeypatch):
+    from liveclips.ondemand import ingest
+
+    calls = []
+
+    async def run(*cmd, timeout=300):
+        calls.append(cmd)
+        return json.dumps(info())
+
+    cookies = tmp_path / "youtube-cookies.txt"
+    monkeypatch.setattr(ingest, "COOKIES_FILE", cookies)
+    await probe("https://youtu.be/abc", run=run)
+    assert "--cookies" not in calls[-1]  # sem arquivo, não passa nada
+    cookies.write_text("# Netscape HTTP Cookie File\n")
+    await probe("https://youtu.be/abc", run=run)
+    cmd = calls[-1]
+    assert cmd[cmd.index("--cookies") + 1] == str(cookies)
+    assert cmd[-2:] == ("--", "https://youtu.be/abc")  # o link continua por último
+
+
+def test_friendly_errors():
+    from liveclips.ondemand.ingest import friendly_error
+
+    assert "idade" in friendly_error("ERROR: [youtube] x: Sign in to confirm your age. This...")
+    assert "robô" in friendly_error("ERROR: Sign in to confirm you’re not a bot")
+    assert "privado" in friendly_error("ERROR: [youtube] x: Private video. Sign in")
+    assert "indisponível" in friendly_error("ERROR: [youtube] x: Video unavailable")
+    assert friendly_error("ffmpeg falhou (1): qualquer coisa") is None

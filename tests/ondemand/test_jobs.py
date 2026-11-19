@@ -243,3 +243,18 @@ async def test_unknown_duration_is_refused(db, tmp_path):
     await r.process(db.get_job(jid))
     assert db.get_job(jid)["state"] == "failed"
     assert "duração" in notes.finished[-1][2]
+
+
+async def test_age_restricted_video_gets_a_clear_message(db, tmp_path):
+    from liveclips.processing.ffmpeg import MediaError
+
+    r, notes, _ = make(db, tmp_path)
+
+    async def probe(url):
+        raise MediaError("yt-dlp falhou (1): ERROR: [youtube] x: Sign in to confirm your age.")
+
+    r.ops.probe = probe
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    assert db.get_job(jid)["state"] == "failed"
+    assert "restrição de idade" in notes.finished[-1][2]
