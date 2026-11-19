@@ -139,3 +139,22 @@ def test_jobs_queue(db):
     import pytest
     with pytest.raises(ValueError):
         db.update_job(a, url="x")  # campo não permitido
+
+
+def test_protected_media_ids_covers_waiting_ondemand_cuts(db):
+    from factories import make_candidate
+    from liveclips.core.models import State
+    ids = {}
+    for name, state, reason in [("det", State.DETECTED, None),
+                                ("proc", State.PROCESSING, None),
+                                ("cut", State.FAILED, "recortando (sob demanda)"),
+                                ("bad", State.FAILED, "outro erro"),
+                                ("rej", State.REJECTED_AI, "nota")]:
+        c = make_candidate(clip_id=f"ondemand:{name}", source="ondemand", state=state,
+                           reason=reason)
+        ids[name] = db.insert_candidate(c)
+    auto = make_candidate(clip_id="twitch:auto", state=State.DETECTED)
+    auto_id = db.insert_candidate(auto)
+    prot = db.protected_media_ids()
+    assert {ids["det"], ids["proc"], ids["cut"]} <= prot
+    assert not ({ids["bad"], ids["rej"], auto_id} & prot)

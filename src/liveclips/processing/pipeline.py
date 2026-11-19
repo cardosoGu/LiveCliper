@@ -91,6 +91,10 @@ class Pipeline:
         language = None
         try:
             if not (c.raw_path and Path(c.raw_path).exists() and c.transcript is not None):
+                if c.source == "ondemand":
+                    # clip_url é o vídeo inteiro: nunca baixar de novo como se fosse o clipe
+                    self._set(c, State.FAILED, "trecho sumiu antes da avaliação")
+                    return
                 transcript = await self._prepare_media(c, work)
                 if transcript is None:
                     return  # rejeitado antes da IA (fala em outro idioma)

@@ -162,3 +162,22 @@ async def test_ondemand_candidate_never_expires(db, tmp_path):
     p.now_fn = lambda: later
     await p.tick()
     assert db.get(c.id).state is not State.EXPIRED
+
+
+async def test_ondemand_without_raw_fails_and_never_downloads(db, tmp_path):
+    downloads = []
+    ops = fake_ops()
+    real = ops.download
+
+    async def spy(url, dest):
+        downloads.append(url)
+        return await real(url, dest)
+
+    ops.download = spy
+    p, c = make_pipeline(db, tmp_path, verdict(8.0), ops=ops)
+    c.source = "ondemand"
+    db.update(c)
+    await p.process(c)
+    got = db.get(c.id)
+    assert got.state is State.FAILED and got.reason == "trecho sumiu antes da avaliação"
+    assert downloads == []

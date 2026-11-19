@@ -146,10 +146,13 @@ class DB:
         return [_from_row(r) for r in rows]
 
     def protected_media_ids(self) -> set[int]:
-        """Clipes cujo vídeo ainda será usado (aguardando ou aprovados)."""
+        """Clipes cujo vídeo ainda será usado (aguardando ou aprovados). Os cortes do sob
+        demanda também: o trecho baixado não pode ser baixado de novo como um clipe."""
         rows = self.conn.execute(
-            "SELECT id FROM candidates WHERE state IN (?,?)",
-            (State.AWAITING_APPROVAL.value, State.APPROVED.value),
+            "SELECT id FROM candidates WHERE state IN (?,?) OR (source='ondemand' AND "
+            "(state IN (?,?) OR (state=? AND reason=?)))",
+            (State.AWAITING_APPROVAL.value, State.APPROVED.value, State.DETECTED.value,
+             State.PROCESSING.value, State.FAILED.value, "recortando (sob demanda)"),
         ).fetchall()
         return {int(r["id"]) for r in rows}
 
