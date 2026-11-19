@@ -150,3 +150,16 @@ def test_protected_media_ids_covers_waiting_ondemand_cuts(db):
     prot = db.protected_media_ids()
     assert {ids["det"], ids["proc"], ids["cut"]} <= prot
     assert not ({ids["bad"], ids["rej"], auto_id} & prot)
+
+
+def test_retire_legacy_candidates_discards_only_non_ondemand_open_ones(db):
+    ids = {}
+    for key, src, st in [("a", "chat_spike", State.DETECTED), ("b", "twitch_public", State.PROCESSING),
+                         ("c", "chat_spike", State.AWAITING_APPROVAL), ("d", "ondemand", State.DETECTED)]:
+        c = make_candidate(clip_id=key, source=src, state=st)
+        ids[key] = db.insert_candidate(c)
+    assert db.retire_legacy_candidates() == 3
+    got = {k: db.get(i) for k, i in ids.items()}
+    for k in "abc":
+        assert got[k].state is State.DISCARDED and got[k].reason == "tempo real removido"
+    assert got["d"].state is State.DETECTED

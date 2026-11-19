@@ -168,6 +168,15 @@ class DB:
         self.conn.commit()
         return cur.rowcount
 
+    def retire_legacy_candidates(self) -> int:
+        """Descarta o que sobrou do tempo real (removido): nunca deve ser avaliado nem postado."""
+        cur = self.conn.execute(
+            "UPDATE candidates SET state=?, reason=? WHERE source<>'ondemand' AND state IN (?,?,?)",
+            (State.DISCARDED.value, "tempo real removido", State.DETECTED.value,
+             State.PROCESSING.value, State.AWAITING_APPROVAL.value))
+        self.conn.commit()
+        return cur.rowcount
+
     def counts_since(self, since: datetime) -> dict[str, int]:
         rows = self.conn.execute(
             "SELECT state, COUNT(*) AS n FROM candidates WHERE updated_at>=? GROUP BY state",

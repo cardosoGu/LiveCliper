@@ -51,6 +51,9 @@ async def amain() -> None:
     media_dir = data / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
     db = DB(str(data / "liveclips.db"))
+    retired = db.retire_legacy_candidates()
+    if retired:
+        log.info("%d candidato(s) do tempo real descartado(s)", retired)
     db.reset_processing()
     runtime = RuntimeSettings(db, cfg)
 
@@ -66,7 +69,7 @@ async def amain() -> None:
             log.warning("Discord não configurado: avisos vão só para o log")
             transport = LogTransport()
 
-        # Só com token de app; ainda sem uso aqui (o sob demanda passa a usar depois).
+        # Só com token de app (live da Twitch em andamento no sob demanda).
         twitch = (TwitchAPI(cfg.twitch_client_id, cfg.twitch_client_secret, http)
                   if cfg.twitch_client_id and cfg.twitch_client_secret else None)
 
