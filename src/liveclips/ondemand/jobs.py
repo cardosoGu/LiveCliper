@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import shutil
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Protocol
@@ -24,6 +24,7 @@ from .topics import Topic, choose_topics
 
 log = logging.getLogger(__name__)
 
+CUTTING_REASON = "recortando (sob demanda)"
 DONE_STATES = {State.AWAITING_APPROVAL, State.APPROVED, State.PUBLISHED, State.DISCARDED}
 
 
@@ -207,31 +208,40 @@ class OnDemandRunner:
         return topics
 
     async def _cuts(self, job, meta, transcript, topics, rms) -> int:
-        existing = {c.clip_id for c in self.db.job_candidates(job["id"])}
+        existing = {c.clip_id: c for c in self.db.job_candidates(job["id"])}
         clips = [c for c in (snap_clip(transcript.words, t.peak, t.start, t.end, rms)
                              for t in topics) if c is not None]
-        made = len(existing)
+        made = 0
         for i, (s, e) in enumerate(clips, 1):
             clip_id = f"ondemand:{job['id']}:{int(s * 10)}"
-            if clip_id in existing:
+            cand = existing.get(clip_id)
+            if cand is not None and not (cand.state is State.FAILED
+                                         and cand.reason == CUTTING_REASON):
+                made += 1  # já cortado (pronto ou além)
                 continue
             await self._progress(job, "cuts", f"✂️ recortando {i}/{len(clips)}…")
             try:
-                await self._make_candidate(job, meta, transcript, clip_id, s, e)
+                if cand is None:
+                    cand = self._new_candidate(job, meta, clip_id, s, e)
+                    if self.db.insert_candidate(cand) is None:
+                        continue  # já existia
+                await self._finish_cut(job, transcript, cand, s, e)
                 made += 1
             except Exception as ex:
                 log.warning("corte %s do job %s falhou: %s", i, job["id"], ex)
+        if made == 0 and clips:
+            raise JobFailed("não consegui recortar nenhum trecho (erro no download)")
         return made
 
-    async def _make_candidate(self, job, meta, transcript, clip_id, s, e) -> None:
-        c = Candidate(platform=meta.platform if meta.platform != "outro" else "youtube",
-                      source="ondemand", clip_id=clip_id, clip_url=job["url"],
-                      channel=meta.channel, created_at=self.now_fn(), duration=e - s,
-                      title=meta.title, rank=1000.0, state=State.FAILED,
-                      reason="recortando (sob demanda)", job_id=job["id"],
-                      start_s=s, end_s=e)
-        if self.db.insert_candidate(c) is None:
-            return  # já existia
+    def _new_candidate(self, job, meta, clip_id, s, e) -> Candidate:
+        return Candidate(platform=meta.platform if meta.platform != "outro" else "youtube",
+                         source="ondemand", clip_id=clip_id, clip_url=job["url"],
+                         channel=meta.channel, created_at=self.now_fn(), duration=e - s,
+                         title=meta.title, rank=1000.0, state=State.FAILED,
+                         reason=CUTTING_REASON, job_id=job["id"], start_s=s, end_s=e)
+
+    async def _finish_cut(self, job, transcript, c, s, e) -> None:
+        """Baixa o trecho, gera legenda/transcrição e só então libera para o pipeline."""
         folder = self.media_dir / str(c.id)
         raw = await self.ops.download_section(job["url"], s, e, folder / "raw.mp4")
         words = [{**w, "start": w["start"] - s, "end": w["end"] - s}
@@ -251,13 +261,22 @@ class OnDemandRunner:
             if any(c.state in (State.DETECTED, State.PROCESSING) for c in cands):
                 continue
             sent = [c for c in cands if c.state in DONE_STATES]
+            failed = [c for c in cands if c.state is State.FAILED]
             rejected = sorted((c for c in cands if c.state is State.REJECTED_AI),
                               key=lambda c: c.ai_score or 0, reverse=True)
             text = (f"{len(sent)} corte(s) enviado(s) para o #aprovação, "
                     f"{len(rejected)} descartado(s) pela IA")
+            if failed:
+                text += f", {len(failed)} falharam"
+            if not sent and not rejected:
+                await self._finish(job, False,
+                                   f"nenhum corte ficou pronto ({len(failed)} falharam)", "failed")
+                continue
             if not sent and rejected:
                 text = "nenhum corte passou da nota mínima. Os melhores descartados:\n" + \
-                    "\n".join(f"• {c.ai_score or 0:.1f} — {c.reason}" for c in rejected[:3])
+                    "\n".join(f"• {c.reason}" for c in rejected[:3])
+                if failed:
+                    text += f"\n({len(failed)} falharam)"
             await self._finish(job, True, text, "done")
 
     async def run(self) -> None:

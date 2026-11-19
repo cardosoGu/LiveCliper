@@ -146,3 +146,47 @@ async def test_status_line_and_queue_position(db, tmp_path):
     assert (r.queue_position(a), r.queue_position(b)) == (1, 2)
     db.update_job(a, state="running", title="Podpah", progress="transcrevendo…")
     assert r.status_line() == '🔗 Sob demanda: processando "Podpah" (transcrevendo…) · 1 na fila'
+
+
+async def test_orphan_cut_is_retried_and_reused(db, tmp_path):
+    r, notes, calls = make(db, tmp_path)
+    good = r.ops.download_section
+
+    async def boom(url, s, e, dest):
+        raise RuntimeError("download caiu")
+
+    r.ops.download_section = boom
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    job = db.get_job(jid)
+    assert job["state"] == "failed" and "não consegui recortar" in notes.finished[-1][2]
+    [orphan] = db.job_candidates(jid)
+    assert orphan.state is State.FAILED and orphan.reason == "recortando (sob demanda)"
+
+    r.ops.download_section = good
+    db.update_job(jid, state="queued")
+    await r.process(db.get_job(jid))
+    assert db.get_job(jid)["state"] == "evaluating"
+    [c] = db.job_candidates(jid)
+    assert c.id == orphan.id and c.state is State.DETECTED
+    assert Path(c.raw_path).exists() and (Path(c.raw_path).parent / "subs.ass").exists()
+
+
+async def test_summary_counts_failed_cuts(db, tmp_path):
+    from liveclips.core.models import Candidate
+    from liveclips.core.timeutil import utcnow
+
+    r, notes, _ = make(db, tmp_path)
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    [c] = db.job_candidates(jid)
+    c.state = State.AWAITING_APPROVAL
+    db.update(c)
+    db.insert_candidate(Candidate(platform="youtube", source="ondemand", clip_id="ondemand:x:1",
+                                  clip_url="u", channel="c", created_at=utcnow(), duration=10,
+                                  title="t", rank=1000.0, state=State.FAILED, reason="x",
+                                  job_id=jid, start_s=1.0, end_s=11.0))
+    await r.check_evaluating()
+    assert db.get_job(jid)["state"] == "done"
+    text = notes.finished[-1][2]
+    assert "1 corte" in text and "1 falharam" in text
