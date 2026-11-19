@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -44,13 +45,13 @@ def make(db, tmp_path, meta=None, topics_exc=None, calls=None):
         return meta or VideoMeta(url, "Podpah #1", "Podpah", "youtube", 600.0, False, None, "x",
                                   "Podpah")
 
-    async def download_audio(url, dest):
-        calls.append("audio")
+    async def download_audio(url, dest, start=None, end=None, live=False):
+        calls.append(("audio", start, end, live))
         dest.write_bytes(b"a")
         return dest
 
-    async def download_section(url, s, e, dest):
-        calls.append(("section", s, e))
+    async def download_section(url, s, e, dest, live=False):
+        calls.append(("section", s, e, live))
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"v")
         return dest
@@ -128,7 +129,8 @@ async def test_steps_are_cached_between_runs(db, tmp_path):
     r.ops.topics = make(db, tmp_path)[0].ops.topics  # a IA voltou
     db.update_job(jid, state="queued")
     await r.process(db.get_job(jid))
-    assert "probe" not in calls and "audio" not in calls and "transcribe" not in calls
+    assert "probe" not in calls and "transcribe" not in calls
+    assert not any(isinstance(c, tuple) and c[0] == "audio" for c in calls)
     assert db.get_job(jid)["state"] == "evaluating"
 
 
@@ -147,18 +149,39 @@ async def test_groq_busy_waits_and_keeps_files(db, tmp_path):
     assert "Groq" in notes.progress[-1][1]
 
 
-async def test_live_and_too_long_are_refused(db, tmp_path):
-    live = VideoMeta("u", "Live", "c", "twitch", 0.0, True, None, "x")
-    r, notes, _ = make(db, tmp_path, meta=live)
-    jid = r.enqueue("u", "", None, None)
-    await r.process(db.get_job(jid))
-    assert db.get_job(jid)["state"] == "failed" and "live em andamento" in notes.finished[-1][2]
+async def test_too_long_recorded_video_is_refused(db, tmp_path):
     long = VideoMeta("u", "Longo", "c", "youtube", 5 * 3600.0, False, None, "x")
     r2, notes2, _ = make(db, tmp_path, meta=long)
     jid2 = r2.enqueue("u", "", None, None)
     await r2.process(db.get_job(jid2))
     assert db.get_job(jid2)["state"] == "failed" and "4 h" in notes2.finished[-1][2]
     assert not (tmp_path / "jobs" / str(jid2)).exists()  # arquivos do job apagados
+
+
+async def test_youtube_live_is_cut_from_start_until_now(db, tmp_path):
+    live = VideoMeta("u", "Live", "c", "youtube", 0.0, True, None, "x", "c", live_start=1000.0)
+    r, notes, calls = make(db, tmp_path, meta=live)
+    r.now_fn = lambda: datetime.fromtimestamp(1000.0 + 120.0, tz=timezone.utc)
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    assert db.get_job(jid)["state"] == "evaluating"
+    assert any("do início até agora" in t for _, t in notes.progress)
+    audio_call = next(c for c in calls if isinstance(c, tuple) and c[0] == "audio")
+    assert audio_call[1:] == (0, 120.0, True)  # start, end, live
+    [c] = db.job_candidates(jid)
+    section = next(x for x in calls if isinstance(x, tuple) and x[0] == "section")
+    assert section[3] is True  # o trecho também usa --live-from-start
+
+
+async def test_live_window_offsets_cuts_to_absolute_time(db, tmp_path):
+    live = VideoMeta("u", "Live", "c", "youtube", 0.0, True, None, "x", "c", live_start=0.0)
+    r, notes, calls = make(db, tmp_path, meta=live)
+    r.cfg = load_settings({"ONDEMAND_MAX_HOURS": "0.02"})  # 72 s: janela [48, 120]
+    r.now_fn = lambda: datetime.fromtimestamp(120.0, tz=timezone.utc)
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    [c] = db.job_candidates(jid)
+    assert c.start_s >= 48.0  # o tempo relativo da janela voltou a ser absoluto
 
 
 async def test_check_evaluating_closes_job_with_summary(db, tmp_path):
@@ -189,7 +212,7 @@ async def test_orphan_cut_is_retried_and_reused(db, tmp_path):
     r, notes, calls = make(db, tmp_path)
     good = r.ops.download_section
 
-    async def boom(url, s, e, dest):
+    async def boom(url, s, e, dest, live=False):
         raise RuntimeError("download caiu")
 
     r.ops.download_section = boom

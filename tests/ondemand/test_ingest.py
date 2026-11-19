@@ -131,3 +131,28 @@ def test_friendly_errors():
     assert "privado" in friendly_error("ERROR: [youtube] x: Private video. Sign in")
     assert "indisponível" in friendly_error("ERROR: [youtube] x: Video unavailable")
     assert friendly_error("ffmpeg falhou (1): qualquer coisa") is None
+
+
+def test_live_start_is_read_only_for_lives():
+    m = parse_metadata(info(is_live=True, release_timestamp=1700000000), "u")
+    assert m.live_start == 1700000000.0
+    assert parse_metadata(info(is_live=True, timestamp=5), "u").live_start == 5.0
+    assert parse_metadata(info(release_timestamp=9), "u").live_start is None
+
+
+async def test_window_and_live_flags_in_downloads(tmp_path):
+    calls = []
+
+    async def run(*cmd, timeout=300):
+        calls.append(cmd)
+        out = Path(cmd[cmd.index("-o") + 1].replace("%(ext)s", "mp3"))
+        out.write_bytes(b"x")
+        return ""
+
+    await download_audio("u", tmp_path / "a.mp3", run=run, start=0, end=7200.5, live=True)
+    assert "*0.00-7200.50" in calls[-1] and "--live-from-start" in calls[-1]
+    await download_audio("u", tmp_path / "b.mp3", run=run)
+    assert "--download-sections" not in calls[-1] and "--live-from-start" not in calls[-1]
+    await download_section("u", 10, 40, tmp_path / "raw.mp4", run=run, live=True)
+    assert "--live-from-start" in calls[-1]
+    assert calls[-1][-2:] == ("--", "u")

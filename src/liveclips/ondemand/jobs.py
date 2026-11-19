@@ -18,6 +18,7 @@ from ..core.timeutil import parse_iso, utcnow
 from ..processing.ffmpeg import probe_dimensions
 from ..processing.subtitles import build_cues, cues_to_ass
 from . import ingest, longtranscribe, signals
+from .source import Source, SourceError, resolve_source
 from .peaks import pick_peaks
 from .snap import snap_clip
 from .topics import Topic, choose_topics
@@ -59,7 +60,7 @@ class JobFailed(Exception):
 
 class OnDemandRunner:
     def __init__(self, db, cfg, http, jobs_dir: Path, media_dir: Path, notifier,
-                 ops: OnDemandOps | None = None, now_fn=utcnow, ai_retry_s: float = 300):
+                 ops: OnDemandOps | None = None, now_fn=utcnow, ai_retry_s: float = 300, twitch=None):
         self.db = db
         self.cfg = cfg
         self.http = http
@@ -72,6 +73,7 @@ class OnDemandRunner:
                 return await longtranscribe.transcribe_long(
                     audio, key, http, work, transcribe_fn=longtranscribe.groq_piece)
             self.ops.transcribe = _transcribe
+        self.twitch = twitch
         self.now_fn = now_fn
         self.ai_retry_s = ai_retry_s
 
@@ -125,15 +127,15 @@ class OnDemandRunner:
         work.mkdir(parents=True, exist_ok=True)
         self.db.update_job(jid, state="running")
         try:
-            meta = await self._meta(job, work)
-            audio = await self._audio(job, work, meta)
+            meta, source = await self._meta(job, work)
+            audio = await self._audio(job, work, source)
             transcript = await self._transcript(job, work, audio)
             if not transcript.words:
                 await self._finish(job, True, "nenhuma fala encontrada no vídeo", "done")
                 return
-            score, rms = await self._signals(job, work, meta, audio)
+            score, rms = await self._signals(job, work, meta, source, audio)
             topics = await self._topics(job, work, meta, transcript, score)
-            made = await self._cuts(job, meta, transcript, topics, rms)
+            made = await self._cuts(job, meta, source, transcript, topics, rms)
         except AIUnavailable:
             self.db.update_job(jid, state="waiting_ai", progress="aguardando a IA voltar…")
             await self._progress(self.db.get_job(jid), "topics", "⏸️ aguardando a IA voltar…")
@@ -161,24 +163,33 @@ class OnDemandRunner:
     async def _meta(self, job, work):
         path = work / "meta.json"
         if path.exists():
-            return ingest.VideoMeta(**json.loads(path.read_text(encoding="utf-8")))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if "meta" in data:
+                return ingest.VideoMeta(**data["meta"]), Source(**data["source"])
+            meta = ingest.VideoMeta(**data)  # formato antigo: vídeo gravado
+            return meta, Source(meta.url, False, 0.0, meta.duration)
         await self._progress(job, "meta", "🔎 lendo o vídeo…")
         meta = await self.ops.probe(job["url"])
-        if meta.is_live:
-            raise JobFailed("live em andamento ainda não é suportada (V2.1)")
-        if meta.duration <= 0:
-            raise JobFailed("não consegui ler a duração do vídeo")
-        if meta.duration > self.cfg.ondemand_max_hours * 3600:
-            raise JobFailed(f"vídeo longo demais (máximo {self.cfg.ondemand_max_hours:g} h)")
-        path.write_text(json.dumps(asdict(meta), ensure_ascii=False), encoding="utf-8")
+        try:
+            source = await resolve_source(meta, self.now_fn().timestamp(),
+                                          self.cfg.ondemand_max_hours * 3600, self.twitch)
+        except SourceError as e:
+            raise JobFailed(str(e)) from e
+        path.write_text(json.dumps({"meta": asdict(meta), "source": asdict(source)},
+                                   ensure_ascii=False), encoding="utf-8")
         self.db.update_job(job["id"], title=meta.title[:200])
-        return meta
+        if source.note:
+            await self._progress(job, "meta", source.note)
+        return meta, source
 
-    async def _audio(self, job, work, meta):
+    async def _audio(self, job, work, source):
         path = work / "audio.mp3"
         if not path.exists():
             await self._progress(job, "audio", "⬇️ baixando o áudio…")
-            path = await self.ops.download_audio(job["url"], path)
+            windowed = source.live or source.start > 0
+            path = await self.ops.download_audio(
+                source.url, path, start=source.start if windowed else None,
+                end=source.end if windowed else None, live=source.live)
         return path
 
     async def _transcript(self, job, work, audio):
@@ -190,18 +201,21 @@ class OnDemandRunner:
         longtranscribe.dump_transcript(t, path)
         return t
 
-    async def _signals(self, job, work, meta, audio):
+    async def _signals(self, job, work, meta, source, audio):
         score_path, rms_path = work / "score.npy", work / "rms.npy"
         if score_path.exists() and rms_path.exists():
             return np.load(score_path), np.load(rms_path)
         await self._progress(job, "signals",
                              "📈 procurando os picos (volume, mais repetidos, chat)…")
         rms = await self.ops.rms(audio, work)
-        n = max(rms.size, int(meta.duration))
-        chat = await self.ops.fetch_chat(job["url"], work) if meta.platform == "youtube" else []
+        n = max(rms.size, int(source.end - source.start))
+        # chat e heatmap são do vídeo inteiro e só existem em gravações
+        chat = (await self.ops.fetch_chat(job["url"], work)
+                if meta.platform == "youtube" and not meta.is_live else [])
+        whole = source.start == 0 and not source.live
         score = signals.combine({
             "loudness": signals.loudness_signal(rms) if rms.size else None,
-            "heatmap": signals.heatmap_signal(meta.heatmap, n),
+            "heatmap": signals.heatmap_signal(meta.heatmap, n) if whole else None,
             "chat": signals.chat_signal(chat, n),
         })
         np.save(score_path, score)
@@ -219,13 +233,13 @@ class OnDemandRunner:
         path.write_text(json.dumps([asdict(t) for t in topics]), encoding="utf-8")
         return topics
 
-    async def _cuts(self, job, meta, transcript, topics, rms) -> int:
+    async def _cuts(self, job, meta, source, transcript, topics, rms) -> int:
         existing = {c.clip_id: c for c in self.db.job_candidates(job["id"])}
         clips = [c for c in (snap_clip(transcript.words, t.peak, t.start, t.end, rms)
                              for t in topics) if c is not None]
         made = 0
         for i, (s, e) in enumerate(clips, 1):
-            clip_id = f"ondemand:{job['id']}:{int(s * 10)}"
+            clip_id = f"ondemand:{job['id']}:{int((source.start + s) * 10)}"
             cand = existing.get(clip_id)
             if cand is not None and not (cand.state is State.FAILED
                                          and cand.reason == CUTTING_REASON):
@@ -234,10 +248,10 @@ class OnDemandRunner:
             await self._progress(job, "cuts", f"✂️ recortando {i}/{len(clips)}…")
             try:
                 if cand is None:
-                    cand = self._new_candidate(job, meta, clip_id, s, e)
+                    cand = self._new_candidate(job, meta, source, clip_id, s, e)
                     if self.db.insert_candidate(cand) is None:
                         continue  # já existia
-                await self._finish_cut(job, transcript, cand, s, e)
+                await self._finish_cut(job, source, transcript, cand, s, e)
                 made += 1
             except Exception as ex:
                 log.warning("corte %s do job %s falhou: %s", i, job["id"], ex)
@@ -245,7 +259,7 @@ class OnDemandRunner:
             raise JobFailed("não consegui recortar nenhum trecho (erro no download)")
         return made
 
-    def _new_candidate(self, job, meta, clip_id, s, e) -> Candidate:
+    def _new_candidate(self, job, meta, source, clip_id, s, e) -> Candidate:
         platform, channel = meta.platform, meta.credit_hint or meta.channel
         if platform == "youtube" and not meta.credit_hint:
             platform, channel = "outro", "youtube.com"  # sem handle: o crédito não inventa um
@@ -253,12 +267,14 @@ class OnDemandRunner:
                          source="ondemand", clip_id=clip_id, clip_url=job["url"],
                          channel=channel, created_at=self.now_fn(), duration=e - s,
                          title=meta.title, rank=1000.0, state=State.FAILED,
-                         reason=CUTTING_REASON, job_id=job["id"], start_s=s, end_s=e)
+                         reason=CUTTING_REASON, job_id=job["id"], start_s=source.start + s,
+                         end_s=source.start + e)
 
-    async def _finish_cut(self, job, transcript, c, s, e) -> None:
+    async def _finish_cut(self, job, source, transcript, c, s, e) -> None:
         """Baixa o trecho, gera legenda/transcrição e só então libera para o pipeline."""
         folder = self.media_dir / str(c.id)
-        raw = await self.ops.download_section(job["url"], s, e, folder / "raw.mp4")
+        raw = await self.ops.download_section(
+            source.url, source.start + s, source.start + e, folder / "raw.mp4", live=source.live)
         words = [{**w, "start": w["start"] - s, "end": w["end"] - s}
                  for w in transcript.words if w["start"] >= s and w["end"] <= e]
         cues = build_cues(words)

@@ -86,7 +86,8 @@ async def amain() -> None:
         from .ondemand import ingest as ondemand_ingest
 
         ondemand_ingest.COOKIES_FILE = data / "youtube-cookies.txt"  # opcional
-        ondemand = OnDemandRunner(db, cfg, http, data / "jobs", media_dir, job_notifier)
+        ondemand = OnDemandRunner(db, cfg, http, data / "jobs", media_dir, job_notifier,
+                                 twitch=twitch)
         if bot is not None:
             bot.attach_ondemand(ondemand)
         scheduler = Scheduler(db, cfg, publishers, media_server, monitor, runtime)

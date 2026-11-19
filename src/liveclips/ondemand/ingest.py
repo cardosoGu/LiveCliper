@@ -60,6 +60,7 @@ class VideoMeta:
     heatmap: list[dict] | None
     video_id: str
     credit_hint: str = ""  # só o que vai depois do host: "Podpah", "channel/UC…" ou o domínio
+    live_start: float | None = None  # epoch (s) do início da live; só quando is_live
 
 
 def _url_path(url: str | None) -> str:
@@ -85,11 +86,15 @@ def parse_metadata(info: dict, url: str) -> VideoMeta:
     extractor = (info.get("extractor_key") or info.get("extractor") or "").lower()
     platform = next((p for p in ("youtube", "twitch", "kick") if p in extractor), "outro")
     channel = info.get("channel") or info.get("uploader") or info.get("uploader_id") or "?"
+    is_live = bool(info.get("is_live"))
+    live_start = (float(info.get("release_timestamp") or info.get("timestamp") or 0) or None
+                  if is_live else None)
     return VideoMeta(url=url, title=info.get("title") or "", channel=str(channel),
                      platform=platform, duration=float(info.get("duration") or 0),
-                     is_live=bool(info.get("is_live")), heatmap=info.get("heatmap") or None,
+                     is_live=is_live, heatmap=info.get("heatmap") or None,
                      video_id=str(info.get("id") or ""),
-                     credit_hint=_credit_hint(info, platform, url, str(channel)))
+                     credit_hint=_credit_hint(info, platform, url, str(channel)),
+                     live_start=live_start)
 
 
 async def probe(url: str, run=run) -> VideoMeta:
@@ -98,12 +103,20 @@ async def probe(url: str, run=run) -> VideoMeta:
     return parse_metadata(json.loads(out), url)
 
 
-async def download_audio(url: str, dest: Path, run=run) -> Path:
-    """Só o áudio, já em MP3 mono 16 kHz 48 kbps (o formato que a transcrição usa)."""
+async def download_audio(url: str, dest: Path, run=run, start: float | None = None,
+                         end: float | None = None, live: bool = False) -> Path:
+    """Só o áudio, já em MP3 mono 16 kHz 48 kbps (o formato que a transcrição usa).
+
+    Com start/end baixa só essa janela (segundos); com live=True usa --live-from-start."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    opts: list[str] = []
+    if start is not None and end is not None:
+        opts += ["--download-sections", f"*{start:.2f}-{end:.2f}"]
+    if live:
+        opts.append("--live-from-start")
     await run(*_yt("yt-dlp", "--no-playlist", "--quiet", "-f", "bestaudio/best", "-x",
               "--audio-format", "mp3", "--audio-quality", "48K", "--postprocessor-args",
-              "ffmpeg:-ac 1 -ar 16000 -b:a 48k",
+              "ffmpeg:-ac 1 -ar 16000 -b:a 48k", *opts,
               "-o", str(dest.with_suffix(".%(ext)s")), "--", url), timeout=3600)
     out = dest.with_suffix(".mp3")
     if not out.exists():
@@ -111,12 +124,14 @@ async def download_audio(url: str, dest: Path, run=run) -> Path:
     return out
 
 
-async def download_section(url: str, start: float, end: float, dest: Path, run=run) -> Path:
+async def download_section(url: str, start: float, end: float, dest: Path, run=run,
+                           live: bool = False) -> Path:
     """Baixa só o trecho [start, end] (em segundos), até 1080p."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     await run(*_yt("yt-dlp", "--no-playlist", "--quiet",
               "-f", "bv*[height<=1080]+ba/b[height<=1080]/best",
               "--download-sections", f"*{start:.2f}-{end:.2f}", "--force-keyframes-at-cuts",
+              *(["--live-from-start"] if live else []),
               "--merge-output-format", "mp4", "-o", str(dest), "--", url), timeout=900)
     if not dest.exists():
         raise MediaError("download do trecho não gerou arquivo")
