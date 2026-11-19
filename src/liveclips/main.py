@@ -28,6 +28,7 @@ from .core.timeutil import local_day, local_midnight_utc, utcnow
 from .core.supervisor import supervise
 from .processing.cleanup import cleanup_loop
 from .processing.ffmpeg import make_preview
+from .ondemand.jobs import LogJobNotifier, OnDemandRunner
 from .processing.pipeline import Pipeline
 from .publishing.media_server import MediaServer
 from .publishing.platforms import build_publishers
@@ -113,6 +114,15 @@ async def amain() -> None:
         auto = AutoController(runtime, twitch.get_game_ids, make_auto_jobs, monitor.alert,
                               on_stop=lambda: chat.set_channels([]))
         pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)
+        if bot is not None:
+            from .control.discord_bot import DiscordJobNotifier
+
+            job_notifier = DiscordJobNotifier(bot)
+        else:
+            job_notifier = LogJobNotifier()
+        ondemand = OnDemandRunner(db, cfg, http, data / "jobs", media_dir, job_notifier)
+        if bot is not None:
+            bot.attach_ondemand(ondemand)
         monitor.tester = ManualTester(twitch, db, pipeline, chat,
                                       followup_delay_s=cfg.clip_followup_s)
         scheduler = Scheduler(db, cfg, publishers, media_server, monitor, runtime)
@@ -138,6 +148,7 @@ async def amain() -> None:
             posts = db.publications_count_since(local_midnight_utc(utcnow()))
             return [
                 f"🔎 Lives monitoradas: {len(chat.channels)}",
+                ondemand.status_line(),
                 f"🧠 IA: {evals} avaliações hoje · "
                 f"{'⚠️ fora do ar, tentando de novo' if pipeline.ai_down else 'Gemini ✅'}",
                 f"📥 Aprovação: {waiting} aguardando",
@@ -152,6 +163,7 @@ async def amain() -> None:
         await media_server.start()
         jobs = {
             "pipeline": pipeline.run,
+            "ondemand": ondemand.run,
             "scheduler": scheduler.run,
             "approval": desk.run,
             "notifier": monitor.run_sender,

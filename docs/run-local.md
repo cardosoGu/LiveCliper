@@ -75,6 +75,12 @@ O TikTok também aceita `TIKTOK_MODE=draft`: o vídeo vai como rascunho no app d
    ```
    O objetivo é **zero falsos "publicar"**.
 
+## Cortes sob demanda
+1. Em discord.com/developers → seu bot → Bot, ligue o **Message Content Intent** e reinicie o app.
+2. Cole no canal de links `link [instrução]` (ex.: um podcast do YouTube e o que você quer cortar).
+3. Acompanhe o progresso na thread "Cortes #N" que o bot abre na mensagem.
+4. Os cortes chegam no #aprovação, com o título do vídeo e o minuto. O limite de duração é `ONDEMAND_MAX_HOURS`.
+
 ## 6. Lançamento
 - Teste 1 publicação real: ligue a plataforma com `/plataforma` no Discord (`DRY_RUN=0`), `docker compose up -d`, espere 1 post e apague pelo botão 🗑️ no Discord.
 - Quarta ~23:30: `TWITCH_GAME_NAME=Grand Theft Auto VI`, plataformas ligadas via `/plataforma`, `docker compose up -d`, e confira `/status`.
