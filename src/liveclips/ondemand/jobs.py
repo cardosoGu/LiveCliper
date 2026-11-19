@@ -87,6 +87,9 @@ class OnDemandRunner:
         running = self.db.jobs_in(["running"])
         waiting = len(self.db.jobs_in(["queued"]))
         if not running:
+            held = len(self.db.jobs_in(["evaluating", "waiting_ai"]))
+            if held and not waiting:
+                return f"🔗 Sob demanda: {held} aguardando a IA"
             return "🔗 Sob demanda: livre" + (f" · {waiting} na fila" if waiting else "")
         j = running[0]
         return (f'🔗 Sob demanda: processando "{j["title"] or j["url"]}" '
@@ -162,6 +165,8 @@ class OnDemandRunner:
         meta = await self.ops.probe(job["url"])
         if meta.is_live:
             raise JobFailed("live em andamento ainda não é suportada (V2.1)")
+        if meta.duration <= 0:
+            raise JobFailed("não consegui ler a duração do vídeo")
         if meta.duration > self.cfg.ondemand_max_hours * 3600:
             raise JobFailed(f"vídeo longo demais (máximo {self.cfg.ondemand_max_hours:g} h)")
         path.write_text(json.dumps(asdict(meta), ensure_ascii=False), encoding="utf-8")

@@ -9,3 +9,5 @@ def test_parse_link_message():
     assert parse_link_message("sem link aqui") is None
     url, instr = parse_link_message("https://x.y " + "a" * 600)
     assert len(instr) == 500
+    assert parse_link_message("olha <https://youtu.be/abc> foca") ==         ("https://youtu.be/abc", "olha foca")
+    assert parse_link_message("(veja https://youtu.be/abc), valeu") ==         ("https://youtu.be/abc", "(veja valeu")

@@ -27,8 +27,9 @@ def parse_link_message(text: str) -> tuple[str, str] | None:
     m = URL_RE.search(text or "")
     if not m:
         return None
-    rest = (text[:m.start()] + " " + text[m.end():]).strip()
-    return m.group(0), " ".join(rest.split())[:500]
+    rest = (text[:m.start()].rstrip().removesuffix("<") + " " + text[m.end():]).strip()
+    url = m.group(0).strip("<>").rstrip("),.>")
+    return url, " ".join(rest.split())[:500]
 
 
 def build_panel_view(s: PanelState) -> discord.ui.View:
@@ -447,7 +448,17 @@ class DiscordJobNotifier:
         self._last[job["id"]] = text
 
     async def finished(self, job, ok, text):
-        await self.progress(job, ("✅ " if ok else "❌ ") + text)
+        try:
+            if job.get("thread_id"):
+                thread = await self._channel(job["thread_id"])
+                if getattr(thread, "archived", False):
+                    try:
+                        await thread.edit(archived=False)
+                    except Exception:
+                        pass
+            await self.progress(job, ("✅ " if ok else "❌ ") + text)
+        except Exception as e:  # o aviso na thread não pode impedir a troca da reação
+            log.warning("status final do job %s não editado: %s", job.get("id"), e)
         if job.get("channel_id") and job.get("message_id"):
             channel = await self._channel(job["channel_id"])
             msg = await channel.fetch_message(job["message_id"])

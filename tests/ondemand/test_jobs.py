@@ -227,3 +227,19 @@ async def test_summary_counts_failed_cuts(db, tmp_path):
     assert db.get_job(jid)["state"] == "done"
     text = notes.finished[-1][2]
     assert "1 corte" in text and "1 falharam" in text
+
+
+async def test_status_line_shows_jobs_waiting_for_ai(db, tmp_path):
+    r, _, _ = make(db, tmp_path)
+    a = r.enqueue("u1", "", None, None)
+    db.update_job(a, state="waiting_ai")
+    assert r.status_line() == "🔗 Sob demanda: 1 aguardando a IA"
+
+
+async def test_unknown_duration_is_refused(db, tmp_path):
+    zero = VideoMeta("u", "Sem duração", "c", "youtube", 0.0, False, None, "x", "c")
+    r, notes, _ = make(db, tmp_path, meta=zero)
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    assert db.get_job(jid)["state"] == "failed"
+    assert "duração" in notes.finished[-1][2]
