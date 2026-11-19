@@ -70,3 +70,34 @@ def test_parse_live_chat_keeps_only_reactions():
 
     lines = [line(5000, "KKKKKK"), line(6000, "boa noite"), line(7500, "mds 😂"), "lixo"]
     assert parse_live_chat(lines) == [5.0, 7.5]
+
+
+def test_parse_live_chat_is_defensive_per_line():
+    good = json.dumps({"replayChatItemAction": {"videoOffsetTimeMsec": "9000", "actions": [
+        {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+            "message": {"runs": [{"text": "kkkkk"}]}}}}}]}})
+    emoji_no_shortcuts = json.dumps({"replayChatItemAction": {"videoOffsetTimeMsec": "1000",
+        "actions": [{"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+            "message": {"runs": [{"emoji": {"shortcuts": []}}]}}}}}]}})
+    null_offset = json.dumps({"replayChatItemAction": {"videoOffsetTimeMsec": None,
+                                                       "actions": []}})
+    negative = json.dumps({"replayChatItemAction": {"videoOffsetTimeMsec": "-500", "actions": [
+        {"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {
+            "message": {"runs": [{"text": "kkkkk"}]}}}}}]}})
+    assert parse_live_chat([emoji_no_shortcuts, null_offset, negative, "[]", good]) == [9.0]
+
+
+async def test_fetch_youtube_chat_parses_in_a_thread(tmp_path):
+    import threading
+    from liveclips.ondemand import ingest
+    seen = []
+    real = ingest.parse_live_chat
+    ingest.parse_live_chat = lambda f: (seen.append(threading.current_thread()), real(f))[1]
+    try:
+        async def run(*cmd, timeout=300):
+            (tmp_path / "chat.live_chat.json").write_text("lixo" + chr(10), encoding="utf-8")
+            return ""
+        assert await ingest.fetch_youtube_chat("u", tmp_path, run=run) == []
+    finally:
+        ingest.parse_live_chat = real
+    assert seen and seen[0] is not threading.main_thread()

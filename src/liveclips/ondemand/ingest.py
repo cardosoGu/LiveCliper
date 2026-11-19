@@ -1,6 +1,7 @@
 """Entrada do sob demanda: metadados, áudio, trechos e chat (yt-dlp)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -107,11 +108,17 @@ def parse_live_chat(lines: Iterable[str]) -> list[float]:
         try:
             action = json.loads(line).get("replayChatItemAction", {})
             ms = int(action.get("videoOffsetTimeMsec", 0))
-        except (ValueError, AttributeError):
-            continue
-        if REACTION.search(_message_text(action)):
-            times.append(ms / 1000)
+            if ms < 0 or not REACTION.search(_message_text(action)):
+                continue
+        except (ValueError, TypeError, IndexError, AttributeError, KeyError):
+            continue  # linha torta não derruba o sinal do chat inteiro
+        times.append(ms / 1000)
     return times
+
+
+def _parse_chat_file(path: Path) -> list[float]:
+    with path.open(encoding="utf-8", errors="ignore") as f:
+        return parse_live_chat(f)
 
 
 async def fetch_youtube_chat(url: str, work_dir: Path, run=run) -> list[float]:
@@ -123,8 +130,7 @@ async def fetch_youtube_chat(url: str, work_dir: Path, run=run) -> list[float]:
         path = work_dir / "chat.live_chat.json"
         if not path.exists():
             return []
-        with path.open(encoding="utf-8", errors="ignore") as f:
-            return parse_live_chat(f)
+        return await asyncio.to_thread(_parse_chat_file, path)  # replay grande: fora do loop
     except Exception as e:
         log.info("chat do replay indisponível: %s", e)
         return []
