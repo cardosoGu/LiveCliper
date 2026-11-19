@@ -5,11 +5,30 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import httpx
+
 from ..processing.ffmpeg import run
 from ..processing.subtitles import words_from_segments
-from ..processing.transcribe import Transcript, transcribe
+from ..processing.transcribe import Transcript, transcribe, transcribe_groq
 
 CHUNK_S = 1200  # 20 min a 48 kbps ≈ 7 MB
+
+
+class TranscriptionBusy(Exception):
+    """Groq devolveu 429: o job espera e retoma dos pedaços já transcritos."""
+
+
+async def groq_piece(audio: Path, key: str, http, groq=transcribe_groq,
+                     fallback=transcribe) -> Transcript:
+    """Um pedaço só no Groq (sem cair no Whisper local por horas). Sem chave: transcribe()."""
+    if not key:
+        return await fallback(audio, key, http)
+    try:
+        return await groq(audio, key, http)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            raise TranscriptionBusy("limite do Groq atingido") from e
+        raise
 
 
 async def split_audio(src: Path, out_dir: Path, chunk_s: int = CHUNK_S, run=run) -> list[Path]:
@@ -27,7 +46,14 @@ async def transcribe_long(audio: Path, groq_key: str, http, work_dir: Path,
     parts = await split(audio, work_dir / "parts", chunk_s)
     segments, words, langs = [], [], []
     for i, part in enumerate(parts):
-        t = await transcribe_fn(part, groq_key, http)
+        cache = work_dir / "parts" / f"part_{i:03d}.json"
+        if cache.exists():
+            t = load_transcript(cache)  # pedaço já transcrito numa tentativa anterior
+        else:
+            t = await transcribe_fn(part, groq_key, http)
+            if t.segments or t.language is not None:
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                dump_transcript(t, cache)
         if not t.segments and t.language is None:
             # transcribe() engole falhas e devolve Transcript() vazio: falha alto, não buraco
             raise RuntimeError(f"transcrição falhou no pedaço {i + 1} de {len(parts)}")

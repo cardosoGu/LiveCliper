@@ -132,6 +132,21 @@ async def test_steps_are_cached_between_runs(db, tmp_path):
     assert db.get_job(jid)["state"] == "evaluating"
 
 
+async def test_groq_busy_waits_and_keeps_files(db, tmp_path):
+    from liveclips.ondemand.longtranscribe import TranscriptionBusy
+    r, notes, _ = make(db, tmp_path)
+
+    async def busy(audio, key, http, work):
+        raise TranscriptionBusy("429")
+
+    r.ops.transcribe = busy
+    jid = r.enqueue("u", "", None, None)
+    await r.process(db.get_job(jid))
+    assert db.get_job(jid)["state"] == "waiting_ai"
+    assert (tmp_path / "jobs" / str(jid) / "audio.mp3").exists()
+    assert "Groq" in notes.progress[-1][1]
+
+
 async def test_live_and_too_long_are_refused(db, tmp_path):
     live = VideoMeta("u", "Live", "c", "twitch", 0.0, True, None, "x")
     r, notes, _ = make(db, tmp_path, meta=live)

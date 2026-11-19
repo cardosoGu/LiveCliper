@@ -69,7 +69,8 @@ class OnDemandRunner:
         self.ops = ops or OnDemandOps()
         if self.ops.transcribe is None:
             async def _transcribe(audio, key, http, work):
-                return await longtranscribe.transcribe_long(audio, key, http, work)
+                return await longtranscribe.transcribe_long(
+                    audio, key, http, work, transcribe_fn=longtranscribe.groq_piece)
             self.ops.transcribe = _transcribe
         self.now_fn = now_fn
         self.ai_retry_s = ai_retry_s
@@ -133,6 +134,11 @@ class OnDemandRunner:
         except AIUnavailable:
             self.db.update_job(jid, state="waiting_ai", progress="aguardando a IA voltar…")
             await self._progress(self.db.get_job(jid), "topics", "⏸️ aguardando a IA voltar…")
+            return
+        except longtranscribe.TranscriptionBusy:
+            self.db.update_job(jid, state="waiting_ai", progress="aguardando o Groq…")
+            await self._progress(self.db.get_job(jid), "transcript",
+                                 "⏸️ limite do Groq atingido, tento de novo em alguns minutos…")
             return
         except JobFailed as e:
             await self._finish(job, False, str(e), "failed")
