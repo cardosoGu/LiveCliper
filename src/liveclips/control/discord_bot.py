@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 
 import discord
@@ -18,6 +19,16 @@ from .panel import (INTERVAL_OPTIONS, LIMIT_OPTIONS, PLATFORM_LABEL as PANEL_LAB
                     SCORE_OPTIONS, VIEWER_OPTIONS, Panel, PanelState)
 
 log = logging.getLogger(__name__)
+
+URL_RE = re.compile(r"https?://\S+")
+
+
+def parse_link_message(text: str) -> tuple[str, str] | None:
+    m = URL_RE.search(text or "")
+    if not m:
+        return None
+    rest = (text[:m.start()] + " " + text[m.end():]).strip()
+    return m.group(0), " ".join(rest.split())[:500]
 
 
 def build_panel_view(s: PanelState) -> discord.ui.View:
@@ -80,7 +91,9 @@ class DiscordBot:
         self.token = token
         self.channel_id = channel_id
         self.admin_user_id = admin_user_id
-        self.client = discord.Client(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        intents.message_content = True
+        self.client = discord.Client(intents=intents)
         self.tree = app_commands.CommandTree(self.client)
         self.monitor: Monitor | None = None
         self.db = db
@@ -93,6 +106,32 @@ class DiscordBot:
         self._warned_no_panel = False
         self.client.event(self.on_ready)
         self.client.event(self.on_interaction)
+        self.client.event(self.on_message)
+        self.ondemand = None
+
+    def attach_ondemand(self, runner) -> None:
+        self.ondemand = runner
+
+    async def on_message(self, message: discord.Message) -> None:
+        links = self.channels.get("gerar-clipes")
+        if (self.ondemand is None or links is None or message.author.bot
+                or message.channel.id != links.id
+                or message.author.id != self.admin_user_id):
+            return
+        parsed = parse_link_message(message.content)
+        if parsed is None:
+            return
+        url, instructions = parsed
+        job_id = self.ondemand.enqueue(url, instructions, message.channel.id, message.id)
+        try:
+            await message.add_reaction("⏳")
+            thread = await message.create_thread(name=f"Cortes #{job_id}")
+            pos = self.ondemand.queue_position(job_id)
+            status = await thread.send(f"⏳ na fila (posição {pos})" if pos > 1
+                                       else "⏳ começando…")
+            self.db.update_job(job_id, thread_id=thread.id, status_message_id=status.id)
+        except discord.HTTPException as e:
+            log.warning("não deu para abrir a thread do job %s: %s", job_id, e)
 
     def attach(self, monitor: Monitor) -> None:
         self.monitor = monitor
@@ -320,7 +359,15 @@ class DiscordBot:
             await reply(interaction, "plataforma", f"{nome} {estado}")
 
     async def run(self) -> None:
-        await self.client.start(self.token)
+        try:
+            await self.client.start(self.token)
+        except discord.PrivilegedIntentsRequired:
+            log.error("ligue 'Message Content Intent' no Discord Developer Portal para usar "
+                      "o #gerar-clipes; seguindo sem ler mensagens")
+            await self.client.close()
+            self.client.clear()
+            self.client._connection._intents.message_content = False  # noqa: SLF001
+            await self.client.start(self.token)
 
 
 class EditModal(discord.ui.Modal, title="Editar clipe"):
@@ -375,6 +422,40 @@ _BUTTONS = (("✅ Aprovar", "approve", discord.ButtonStyle.success),
             ("⚡ Agora", "now", discord.ButtonStyle.primary),
             ("✏️ Editar", "edit", discord.ButtonStyle.secondary),
             ("❌ Descartar", "discard", discord.ButtonStyle.danger))
+
+
+class DiscordJobNotifier:
+    """Progresso do sob demanda na thread da mensagem original."""
+
+    def __init__(self, bot: DiscordBot):
+        self.bot = bot
+        self._last: dict[int, str] = {}
+
+    async def _channel(self, channel_id):
+        return self.bot.client.get_channel(channel_id) or             await self.bot.client.fetch_channel(channel_id)
+
+    async def progress(self, job, text):
+        if not job.get("thread_id") or not job.get("status_message_id"):
+            return
+        if self._last.get(job["id"]) == text:
+            return
+        await asyncio.wait_for(self.bot._ready.wait(), timeout=120)
+        thread = await self._channel(job["thread_id"])
+        msg = await thread.fetch_message(job["status_message_id"])
+        await msg.edit(content=text[:2000])
+        self._last[job["id"]] = text
+
+    async def finished(self, job, ok, text):
+        await self.progress(job, ("✅ " if ok else "❌ ") + text)
+        if job.get("channel_id") and job.get("message_id"):
+            channel = await self._channel(job["channel_id"])
+            msg = await channel.fetch_message(job["message_id"])
+            try:
+                await msg.remove_reaction("⏳", self.bot.client.user)
+            except discord.HTTPException:
+                pass
+            await msg.add_reaction("✅" if ok else "❌")
+        self._last.pop(job["id"], None)
 
 
 class DiscordApprovalTransport:

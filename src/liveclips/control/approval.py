@@ -13,6 +13,7 @@ from ..core.credits import credit_text
 from ..core.db import DB
 from ..core.models import Candidate, State
 from ..core.timeutil import utcnow
+from ..ondemand.topics import fmt_time
 from .runtime import RuntimeSettings
 
 log = logging.getLogger(__name__)
@@ -143,9 +144,12 @@ class ApprovalDesk:
     def card_text(self, c: Candidate, verdict: Verdict, no_video: bool = False) -> str:
         targets = ", ".join(PLATFORM_LABEL.get(n, n) for n in self.platform_names
                             if self.runtime.platform_enabled(n)) or "nenhuma (todas desligadas)"
-        origin = f"📡 Automático · {credit_text(c.platform, c.channel)}"
-        if c.source == "chat_spike":
-            origin += " · pico no chat"
+        if c.source == "ondemand":
+            origin = f"🔗 {c.title[:80]} · {fmt_time(c.start_s or 0)}"
+        else:
+            origin = f"📡 Automático · {credit_text(c.platform, c.channel)}"
+            if c.source == "chat_spike":
+                origin += " · pico no chat"
         lines = [f"🎬 **{verdict.title}** — nota {verdict.score:.1f}",
                  f"_{verdict.reason}_", origin, "",
                  verdict.caption, " ".join(verdict.hashtags), "",

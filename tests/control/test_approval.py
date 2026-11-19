@@ -268,3 +268,12 @@ async def test_concurrent_retry_is_refused(db, tmp_path):
     gate.set()
     assert await first == "ok"
     assert calls == ["tiktok"]
+
+
+async def test_ondemand_card_shows_video_and_time(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    awaiting(db, source="ondemand", title="Podpah #1049", start_s=5020.0, platform="youtube",
+             channel="Podpah")
+    await desk.tick()
+    text = t.posts[0][1]
+    assert "🔗 Podpah #1049 · 1:23:40" in text and "Automático" not in text
