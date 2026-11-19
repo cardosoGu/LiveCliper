@@ -6,7 +6,7 @@ from liveclips.core.models import Candidate
 def make_candidate(**overrides) -> Candidate:
     base = dict(
         platform="twitch",
-        source="chat_spike",
+        source="ondemand",
         clip_id="twitch:abc",
         clip_url="https://clips.twitch.tv/abc",
         channel="gaules",

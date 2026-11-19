@@ -136,7 +136,7 @@ class DB:
         """Candidatos aguardando aprovação, com (posted) ou sem card no #aprovação."""
         cond = "IS NOT NULL" if posted else "IS NULL"
         rows = self.conn.execute(
-            "SELECT * FROM candidates WHERE state=? AND source<>'manual_test'"
+            "SELECT * FROM candidates WHERE state=?"
             f" AND approval_message_id {cond} ORDER BY id ASC LIMIT ?",
             (State.AWAITING_APPROVAL.value, limit),
         ).fetchall()

@@ -151,17 +151,6 @@ async def test_status_after_publication_lists_platforms(db, tmp_path):
     assert "Reels ✅ https://ig/p/1" in text and "TikTok 📥 rascunho" in text
 
 
-async def test_old_automatic_card_shows_age(db, tmp_path):
-    desk, t, _ = make_desk(db, tmp_path)
-    c = awaiting(db)
-    await desk.tick()
-    desk.now_fn = lambda: c.created_at + timedelta(hours=3, minutes=5)
-    await desk.tick()
-    assert "⏰ há 3 h" in t.edits[-1][2]
-    await desk.tick()
-    assert len(t.edits) == 1  # só edita quando a hora muda
-
-
 async def test_one_broken_card_does_not_block_the_others(db, tmp_path):
     desk, t, _ = make_desk(db, tmp_path)
     broken = set()
@@ -178,12 +167,6 @@ async def test_one_broken_card_does_not_block_the_others(db, tmp_path):
     assert db.get(good.id).approval_message_id == 1001
     assert db.get(bad.id).approval_message_id is None
     assert db.get(bad.id).state is State.AWAITING_APPROVAL
-
-
-async def test_tick_ignores_manual_test_clips(db, tmp_path):
-    desk, t, _ = make_desk(db, tmp_path)
-    awaiting(db, source="manual_test")
-    assert await desk.tick() == 0 and t.posts == []
 
 
 async def test_new_card_posted_even_with_many_pending_cards(db, tmp_path):
@@ -277,3 +260,11 @@ async def test_ondemand_card_shows_video_and_time(db, tmp_path):
     await desk.tick()
     text = t.posts[0][1]
     assert "🔗 Podpah #1049 · 1:23:40" in text and "Automático" not in text
+
+
+async def test_card_never_shows_age_warning(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    c = awaiting(db, title="Podpah #1049", start_s=60.0)
+    desk.now_fn = lambda: c.created_at + timedelta(hours=5)
+    await desk.tick()
+    assert "⏰" not in t.posts[0][1] and "🔗 Podpah #1049 · " in t.posts[0][1]

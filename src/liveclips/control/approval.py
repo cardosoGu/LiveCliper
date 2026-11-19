@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
 from ..ai.verdict import Verdict
-from ..core.credits import credit_text
 from ..core.db import DB
 from ..core.models import Candidate, State
 from ..core.timeutil import utcnow
@@ -19,7 +18,6 @@ from .runtime import RuntimeSettings
 log = logging.getLogger(__name__)
 
 ACTIONS = ("approve", "now", "edit", "discard", "retry-instagram", "retry-youtube", "retry-tiktok")
-AGE_WARN_H = 2  # cards do automático mostram a idade a partir daqui
 PLATFORM_LABEL = {"instagram": "Reels", "youtube": "Shorts", "tiktok": "TikTok"}
 
 
@@ -73,23 +71,15 @@ class ApprovalDesk:
         self.now_fn = now_fn
         self.retry = retry
         self._retrying: set[tuple[int, str]] = set()
-        self._age_shown: dict[int, int] = {}
 
     # --- cards ------------------------------------------------------------
     async def tick(self) -> int:
         posted = 0
         for c in self.db.awaiting_cards(posted=False, limit=100):
-            if c.source == "manual_test":
-                continue  # /testar nunca vira card
             try:
                 if await self._post(c):
                     posted += 1
             except Exception as e:  # um card quebrado não trava a fila inteira
-                log.warning("card do clipe %s falhou: %s", c.id, e)
-        for c in self.db.awaiting_cards(posted=True, limit=50):
-            try:
-                await self._refresh_age(c)
-            except Exception as e:
                 log.warning("card do clipe %s falhou: %s", c.id, e)
         return posted
 
@@ -102,7 +92,6 @@ class ApprovalDesk:
         c.approval_message_id = await self.transport.post(
             self.card_text(c, verdict, no_video), video, link, c.id, True)
         self.db.update(c)
-        self._age_shown[c.id] = self._age_hours(c)
         return True
 
     async def _attachment(self, path: Path) -> tuple[Path | None, str | None]:
@@ -122,20 +111,6 @@ class ApprovalDesk:
             log.warning("link público falhou: %s", e)
             return None, None
 
-    def _age_hours(self, c: Candidate) -> int:
-        return int((self.now_fn() - c.created_at).total_seconds() // 3600)
-
-    async def _refresh_age(self, c: Candidate) -> None:
-        if c.source == "ondemand":
-            return  # vídeo gravado não perde a graça com o tempo
-        hours = self._age_hours(c)
-        if hours < AGE_WARN_H or self._age_shown.get(c.id) == hours:
-            return
-        self._age_shown[c.id] = hours
-        verdict = Verdict.model_validate_json(c.ai_json)
-        await self.transport.edit(c.approval_message_id, c.id,
-                                  self.card_text(c, verdict), True)
-
     def failed_platforms(self, c: Candidate) -> list[str]:
         if c.state is not State.PUBLISHED or not c.reason:
             return []
@@ -144,19 +119,11 @@ class ApprovalDesk:
     def card_text(self, c: Candidate, verdict: Verdict, no_video: bool = False) -> str:
         targets = ", ".join(PLATFORM_LABEL.get(n, n) for n in self.platform_names
                             if self.runtime.platform_enabled(n)) or "nenhuma (todas desligadas)"
-        if c.source == "ondemand":
-            origin = f"🔗 {c.title[:80]} · {fmt_time(c.start_s or 0)}"
-        else:
-            origin = f"📡 Automático · {credit_text(c.platform, c.channel)}"
-            if c.source == "chat_spike":
-                origin += " · pico no chat"
+        origin = f"🔗 {c.title[:80]} · {fmt_time(c.start_s or 0)}"
         lines = [f"🎬 **{verdict.title}** — nota {verdict.score:.1f}",
                  f"_{verdict.reason}_", origin, "",
                  verdict.caption, " ".join(verdict.hashtags), "",
                  f"Vai para: {targets}"]
-        hours = self._age_hours(c)
-        if c.source != "ondemand" and hours >= AGE_WARN_H:
-            lines.append(f"⏰ há {hours} h")
         if no_video:
             lines.append("⚠️ vídeo indisponível no Discord")
         return "\n".join(lines)

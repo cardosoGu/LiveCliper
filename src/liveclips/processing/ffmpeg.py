@@ -46,31 +46,6 @@ async def probe_dimensions(path: Path) -> tuple[int, int]:
     return int(w), int(h)
 
 
-async def concat_clips(parts: list[Path], dst: Path) -> Path:
-    """Junta clipes seguidos do mesmo canal, sempre recodificando na resolução do
-    primeiro: copiar sem recodificar deixava o vídeo congelado após o 1º clipe
-    (carimbos de tempo do 2º clipe não continuam os do 1º)."""
-    w, h = await probe_dimensions(parts[0])
-    inputs, chains, pads = [], [], ""
-    for i, p in enumerate(parts):
-        inputs += ["-i", str(p)]
-        chains.append(f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                      f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}];"
-                      f"[{i}:a]aresample=48000[a{i}]")
-        pads += f"[v{i}][a{i}]"
-    graph = ";".join(chains) + f";{pads}concat=n={len(parts)}:v=1:a=1[v][a]"
-    await run("ffmpeg", "-y", *inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
-              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac",
-              str(dst), timeout=600)
-    return dst
-
-
-async def extract_audio(src: Path, dst: Path) -> Path:
-    await run("ffmpeg", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
-              "-b:a", "48k", str(dst))
-    return dst
-
-
 def build_filter(credit: str, srt_path: str | None) -> str:
     parts = [
         "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"

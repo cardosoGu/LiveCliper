@@ -145,7 +145,7 @@ def test_protected_media_ids_covers_waiting_ondemand_cuts(db):
         c = make_candidate(clip_id=f"ondemand:{name}", source="ondemand", state=state,
                            reason=reason)
         ids[name] = db.insert_candidate(c)
-    auto = make_candidate(clip_id="twitch:auto", state=State.DETECTED)
+    auto = make_candidate(clip_id="twitch:auto", source="legado", state=State.DETECTED)
     auto_id = db.insert_candidate(auto)
     prot = db.protected_media_ids()
     assert {ids["det"], ids["proc"], ids["cut"]} <= prot

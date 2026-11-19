@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 
 from .timeutil import utcnow
@@ -18,7 +18,7 @@ class State(StrEnum):
     EXPIRED = "expired"
     DELETED = "deleted"
     FAILED = "failed"
-    TESTED = "tested"  # criado pelo /testar: nunca entra na fila de publicação
+    TESTED = "tested"  # legado do /testar (removido); mantido para linhas antigas do banco
     AWAITING_APPROVAL = "awaiting_approval"  # IA aprovou; card no #aprovação
     APPROVED = "approved"  # admin aprovou; fila de publicação
     DISCARDED = "discarded"  # admin descartou
@@ -27,7 +27,7 @@ class State(StrEnum):
 @dataclass
 class Candidate:
     platform: str  # "twitch" | "kick"
-    source: str  # "chat_spike" | "twitch_public" | "kick_public"
+    source: str  # "ondemand"
     clip_id: str  # único, com prefixo da plataforma
     clip_url: str
     channel: str
@@ -53,8 +53,3 @@ class Candidate:
     job_id: int | None = None  # pedido sob demanda que gerou o corte
     start_s: float | None = None  # posição do corte no vídeo original
     end_s: float | None = None
-
-
-def is_expired(c: Candidate, now: datetime, ttl_min: int) -> bool:
-    """O momento perde a graça: idade contada a partir da criação do clipe."""
-    return now - c.created_at > timedelta(minutes=ttl_min)

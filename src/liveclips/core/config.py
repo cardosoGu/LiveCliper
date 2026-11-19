@@ -16,13 +16,9 @@ class Settings:
     railway_public_domain: str
     tunnel_metrics_url: str
     dry_run: bool
-    # twitch / kick
+    # twitch (opcional: só para live em andamento)
     twitch_client_id: str
     twitch_client_secret: str
-    twitch_bot_refresh_token: str
-    twitch_game_name: str
-    kick_enabled: bool
-    kick_category_slug: str
     # IA
     gemini_api_key: str  # a primeira chave (compatibilidade)
     gemini_api_keys: tuple[str, ...]
@@ -52,20 +48,10 @@ class Settings:
     yt_client_secret: str
     yt_refresh_token: str
     # ajustes
-    monitor_max_channels: int
-    min_viewers: int
-    spike_multiplier: float
-    spike_min_msgs: int
-    clip_rate_seconds: float
-    clip_followup_s: float
-    rank_threshold: float
     ai_daily_budget: int
     ai_min_score: float
     post_min_interval_min: int
     post_max_per_day: int
-    post_max_per_day_step: int
-    post_max_per_day_cap: int
-    queue_ttl_min: int
     ondemand_max_hours: float
 
     @property
@@ -76,11 +62,6 @@ class Settings:
                "painel": self.discord_panel_channel_id,
                "gerar-clipes": self.discord_links_channel_id}
         return {name: cid for name, cid in ids.items() if cid}
-
-    @property
-    def twitch_game_names(self) -> list[str]:
-        """TWITCH_GAME_NAME aceita várias categorias separadas por vírgula."""
-        return [n.strip() for n in self.twitch_game_name.split(",") if n.strip()]
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -120,10 +101,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         dry_run=b("DRY_RUN", False),
         twitch_client_id=s("TWITCH_CLIENT_ID"),
         twitch_client_secret=s("TWITCH_CLIENT_SECRET"),
-        twitch_bot_refresh_token=s("TWITCH_BOT_REFRESH_TOKEN"),
-        twitch_game_name=s("TWITCH_GAME_NAME", "Grand Theft Auto VI"),  # vírgula separa várias
-        kick_enabled=b("KICK_ENABLED", False),
-        kick_category_slug=s("KICK_CATEGORY_SLUG", "grand-theft-auto-vi"),
         gemini_api_key=(gemini_keys[0] if gemini_keys else ""),
         gemini_api_keys=gemini_keys,
         gemini_model=s("GEMINI_MODEL", "gemini-3.5-flash,gemini-3.8-flash"),
@@ -149,19 +126,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         yt_client_id=s("YT_CLIENT_ID"),
         yt_client_secret=s("YT_CLIENT_SECRET"),
         yt_refresh_token=s("YT_REFRESH_TOKEN"),
-        monitor_max_channels=i("MONITOR_MAX_CHANNELS", 200),
-        min_viewers=i("MIN_VIEWERS", 300),
-        spike_multiplier=f("SPIKE_MULTIPLIER", 3.0),
-        spike_min_msgs=i("SPIKE_MIN_MSGS", 6),
-        clip_rate_seconds=f("CLIP_RATE_SECONDS", 20.0),
-        clip_followup_s=f("CLIP_FOLLOWUP_S", 30.0),
-        rank_threshold=f("RANK_THRESHOLD", 5.0),
         ai_daily_budget=i("AI_DAILY_BUDGET", 300),
         ai_min_score=f("AI_MIN_SCORE", 6.0),
         post_min_interval_min=i("POST_MIN_INTERVAL_MIN", 45),
         post_max_per_day=i("POST_MAX_PER_DAY", 8),
-        post_max_per_day_step=i("POST_MAX_PER_DAY_STEP", 2),
-        post_max_per_day_cap=i("POST_MAX_PER_DAY_CAP", 20),
-        queue_ttl_min=i("QUEUE_TTL_MIN", 90),
         ondemand_max_hours=f("ONDEMAND_MAX_HOURS", 4.0),
     )

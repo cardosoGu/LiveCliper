@@ -76,7 +76,7 @@ async def amain() -> None:
         if bot is not None:
             bot.attach(monitor)
 
-        pipeline = Pipeline(db, cfg, Evaluator(cfg, db), http, media_dir)
+        pipeline = Pipeline(db, cfg, Evaluator(cfg, db), media_dir)
         if bot is not None:
             from .control.discord_bot import DiscordJobNotifier
 

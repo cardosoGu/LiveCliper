@@ -7,7 +7,6 @@ def test_defaults_when_env_empty():
     s = load_settings({})
     assert s.port == 8080
     assert s.data_dir == "/data"
-    assert s.twitch_game_name == "Grand Theft Auto VI"
     assert s.ai_min_score == 6.0
     assert s.discord_upload_limit_mb == 10.0
     assert s.claude_model == "claude-opus-5-5"
@@ -41,11 +40,6 @@ def test_gemini_keys_in_order():
                        "GEMINI_API_KEY3": " "})
     assert s.gemini_api_keys == ("a", "b", "c") and s.gemini_api_key == "a"
     assert load_settings({"GEMINI_API_KEY": "x"}).gemini_api_keys == ("x",)
-
-
-def test_several_twitch_categories():
-    s = load_settings({"TWITCH_GAME_NAME": "Just Chatting, Grand Theft Auto V ,,Minecraft"})
-    assert s.twitch_game_names == ["Just Chatting", "Grand Theft Auto V", "Minecraft"]
 
 
 def test_tiktok_accepts_draft_but_youtube_does_not():

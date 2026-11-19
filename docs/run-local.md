@@ -2,14 +2,13 @@
 
 ## 1. Pré-requisitos
 - **Docker Desktop** instalado e aberto.
-- Para a noite do lançamento: desative a suspensão do Windows (Configurações → Sistema → Energia → "Nunca") e, se puder, use cabo de rede.
+- Para cortes longos: desative a suspensão do Windows (Configurações → Sistema → Energia → "Nunca") para o app não parar no meio.
 
 ## 2. Configurar
 ```bash
 cp .env.example .env
 ```
 Abra o `.env` e preencha as chaves. O mínimo para rodar o fluxo de aprovação é:
-- `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_BOT_REFRESH_TOKEN`
 - `GEMINI_API_KEY` (e/ou `ANTHROPIC_API_KEY`) e `GROQ_API_KEY`
 - `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ADMIN_USER_ID`
 
@@ -29,19 +28,13 @@ Parar: `docker compose down`. Banco e vídeos ficam em `./data` e sobrevivem a r
 
 ## 4. Como obter cada credencial
 
-### Twitch
-1. Em <https://dev.twitch.tv/console/apps> crie um app. Em "OAuth Redirect URLs" coloque `http://localhost:3000`.
-2. Copie o Client ID e gere um Client Secret.
-3. No navegador, entre na **conta bot** da Twitch (não na sua pessoal) e rode:
-   ```bash
-   uv run python scripts/twitch_oauth.py SEU_CLIENT_ID SEU_CLIENT_SECRET
-   ```
-   Cole o `TWITCH_BOT_REFRESH_TOKEN` que aparecer no `.env`.
-
 ### Discord
 1. <https://discord.com/developers/applications> → New Application → aba **Bot** → Reset Token → copie para `DISCORD_BOT_TOKEN`.
 2. Aba **OAuth2 → URL Generator**: marque `bot` e `applications.commands`; em permissões marque *Send Messages*, *Attach Files*, *Use Slash Commands*. Abra a URL gerada e adicione o bot ao seu servidor.
 3. No Discord: Configurações → Avançado → **Modo Desenvolvedor**. Clique com o botão direito no canal → *Copiar ID* (`DISCORD_CHANNEL_ID`) e no seu usuário → *Copiar ID* (`DISCORD_ADMIN_USER_ID`).
+
+### Twitch (opcional)
+Só para cortar live em andamento da Twitch: em <https://dev.twitch.tv/console/apps> crie um app e coloque o Client ID e o Client Secret em `TWITCH_CLIENT_ID` e `TWITCH_CLIENT_SECRET`.
 
 ### IA
 - Gemini: <https://aistudio.google.com/apikey>
@@ -66,24 +59,24 @@ Parar: `docker compose down`. Banco e vídeos ficam em `./data` e sobrevivem a r
 Ficam em `off` até as auditorias saírem. Depois, configure as chaves e mude o modo para `public`.
 O TikTok também aceita `TIKTOK_MODE=draft`: o vídeo vai como rascunho no app do TikTok (precisa do scope `video.upload`).
 
-## 5. Aprovação (GTA V) e calibração
-1. Com `DRY_RUN=1` (todas as plataformas começam desligadas) e `TWITCH_GAME_NAME=Grand Theft Auto V`, deixe rodando 1–2 h em horário de pico.
-2. Veja os cards no canal #aprovação (aprovar, ⚡ agora, editar ou descartar) e ligue as plataformas com `/plataforma`; só o que você aprova é publicado. Ajuste `SPIKE_*`, `RANK_THRESHOLD` e a nota (`/min_score`).
+## 5. Aprovação e calibração
+1. Com `DRY_RUN=1` (todas as plataformas começam desligadas), mande alguns links e veja os cards no canal #aprovação (aprovar, ⚡ agora, editar ou descartar).
+2. Ligue as plataformas com `/plataforma`; só o que você aprova é publicado. Ajuste a nota mínima com `/min_score`.
 3. Calibre a IA com ~30 clipes rotulados (inclua spoiler, conteúdo impróprio, inglês e clipes chatos):
    ```bash
    uv run --env-file .env python scripts/calibrate_ai.py ./calibracao ./calibracao/labels.csv
    ```
    O objetivo é **zero falsos "publicar"**.
 
-## Cortes sob demanda
+## 6. Como usar: colar link → thread → #aprovação → publicar
 1. Em discord.com/developers → seu bot → Bot, ligue o **Message Content Intent** e reinicie o app.
 2. Cole no canal de links `link [instrução]` (ex.: um podcast do YouTube e o que você quer cortar).
 3. Acompanhe o progresso na thread "Cortes #N" que o bot abre na mensagem.
 4. Os cortes chegam no #aprovação, com o título do vídeo e o minuto. O limite de duração é `ONDEMAND_MAX_HOURS`.
+5. Aprove (ou ⚡ agora) e o clipe é publicado nas plataformas ligadas.
 
-## 6. Lançamento
-- Teste 1 publicação real: ligue a plataforma com `/plataforma` no Discord (`DRY_RUN=0`), `docker compose up -d`, espere 1 post e apague pelo botão 🗑️ no Discord.
-- Quarta ~23:30: `TWITCH_GAME_NAME=Grand Theft Auto VI`, plataformas ligadas via `/plataforma`, `docker compose up -d`, e confira `/status`.
+## 7. Publicar de verdade
+- Teste 1 publicação real: ligue a plataforma com `/plataforma` no Discord (`DRY_RUN=0`), `docker compose up -d`, aprove 1 corte e apague pelo botão 🗑️ no Discord.
 - Emergência: `/pause` no Discord.
 
 ### Vídeos com restrição de idade (ou "confirme que não é um robô")
