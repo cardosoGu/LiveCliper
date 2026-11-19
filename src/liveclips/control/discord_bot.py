@@ -92,11 +92,8 @@ class DiscordBot:
         self.token = token
         self.channel_id = channel_id
         self.admin_user_id = admin_user_id
-        intents = discord.Intents.default()
-        intents.message_content = True
-        self.client = discord.Client(intents=intents)
-        self.tree = app_commands.CommandTree(self.client)
         self.monitor: Monitor | None = None
+        self._read_messages = True  # vira False se o Discord recusar o Message Content Intent
         self.db = db
         self.channels: dict = {}
         self.desk: ApprovalDesk | None = None
@@ -105,10 +102,21 @@ class DiscordBot:
         self._channel: discord.abc.Messageable | None = None
         self._panel_lock = asyncio.Lock()  # refresh_panel concorrente duplicaria a mensagem
         self._warned_no_panel = False
+        self.ondemand = None
+        self._build_client()
+
+    def _build_client(self) -> None:
+        """Cria um discord.Client novo (um client fechado não conecta de novo: a sessão
+        HTTP dele fica fechada) e registra eventos e comandos nele."""
+        intents = discord.Intents.default()
+        intents.message_content = self._read_messages
+        self.client = discord.Client(intents=intents)
+        self.tree = app_commands.CommandTree(self.client)
         self.client.event(self.on_ready)
         self.client.event(self.on_interaction)
         self.client.event(self.on_message)
-        self.ondemand = None
+        if self.monitor is not None:
+            self._register_commands()
 
     def attach_ondemand(self, runner) -> None:
         self.ondemand = runner
@@ -360,14 +368,19 @@ class DiscordBot:
             await reply(interaction, "plataforma", f"{nome} {estado}")
 
     async def run(self) -> None:
+        if self.client.is_closed():  # o supervisor reiniciou depois de uma queda
+            self._build_client()
         try:
             await self.client.start(self.token)
         except discord.PrivilegedIntentsRequired:
             log.error("ligue 'Message Content Intent' no Discord Developer Portal para usar "
                       "o #gerar-clipes; seguindo sem ler mensagens")
-            await self.client.close()
-            self.client.clear()
-            self.client._connection._intents.message_content = False  # noqa: SLF001
+            try:
+                await self.client.close()
+            except Exception:
+                pass
+            self._read_messages = False
+            self._build_client()
             await self.client.start(self.token)
 
 
