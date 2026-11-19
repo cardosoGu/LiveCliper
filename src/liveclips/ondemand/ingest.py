@@ -39,7 +39,7 @@ def parse_metadata(info: dict, url: str) -> VideoMeta:
 
 
 async def probe(url: str, run=run) -> VideoMeta:
-    out = await run("yt-dlp", "-J", "--no-playlist", "--no-warnings", url, timeout=120)
+    out = await run("yt-dlp", "-J", "--no-playlist", "--no-warnings", "--", url, timeout=120)
     return parse_metadata(json.loads(out), url)
 
 
@@ -47,9 +47,9 @@ async def download_audio(url: str, dest: Path, run=run) -> Path:
     """Só o áudio, já em MP3 mono 16 kHz 48 kbps (o formato que a transcrição usa)."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     await run("yt-dlp", "--no-playlist", "--quiet", "-f", "bestaudio/best", "-x",
-              "--audio-format", "mp3", "--postprocessor-args",
+              "--audio-format", "mp3", "--audio-quality", "48K", "--postprocessor-args",
               "ffmpeg:-ac 1 -ar 16000 -b:a 48k",
-              "-o", str(dest.with_suffix(".%(ext)s")), url, timeout=3600)
+              "-o", str(dest.with_suffix(".%(ext)s")), "--", url, timeout=3600)
     out = dest.with_suffix(".mp3")
     if not out.exists():
         raise MediaError("download do áudio não gerou arquivo")
@@ -62,7 +62,7 @@ async def download_section(url: str, start: float, end: float, dest: Path, run=r
     await run("yt-dlp", "--no-playlist", "--quiet",
               "-f", "bv*[height<=1080]+ba/b[height<=1080]/best",
               "--download-sections", f"*{start:.2f}-{end:.2f}", "--force-keyframes-at-cuts",
-              "--merge-output-format", "mp4", "-o", str(dest), url, timeout=900)
+              "--merge-output-format", "mp4", "-o", str(dest), "--", url, timeout=900)
     if not dest.exists():
         raise MediaError("download do trecho não gerou arquivo")
     return dest
@@ -96,7 +96,8 @@ async def fetch_youtube_chat(url: str, work_dir: Path, run=run) -> list[float]:
     """Chat do replay (só YouTube). Sem chat ou com erro: lista vazia (o sinal é opcional)."""
     try:
         await run("yt-dlp", "--no-playlist", "--quiet", "--skip-download", "--write-subs",
-                  "--sub-langs", "live_chat", "-o", str(work_dir / "chat"), url, timeout=1800)
+                  "--sub-langs", "live_chat", "-o", str(work_dir / "chat"), "--", url,
+                  timeout=1800)
         path = work_dir / "chat.live_chat.json"
         if not path.exists():
             return []

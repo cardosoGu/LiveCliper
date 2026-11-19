@@ -41,6 +41,9 @@ async def test_probe_and_downloads_build_yt_dlp_commands(tmp_path):
     sec = await download_section("https://youtu.be/abc", 10, 40.5, tmp_path / "raw.mp4", run=run)
     assert sec == tmp_path / "raw.mp4"
     assert "*10.00-40.50" in calls[2] and "--force-keyframes-at-cuts" in calls[2]
+    assert "48K" in calls[1]
+    for cmd in calls:
+        assert cmd[-2] == "--" and cmd[-1] == "https://youtu.be/abc"
 
 
 def test_parse_live_chat_keeps_only_reactions():
