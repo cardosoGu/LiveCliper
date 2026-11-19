@@ -50,3 +50,25 @@ def test_moving_average_and_signals_keep_length_for_short_inputs():
     assert moving_average(np.ones(10), 61).shape == (10,)
     assert loudness_signal(np.full(10, -30.0)).shape == (10,)
     assert chat_signal([0.0, 1.0], 3).shape == (3,)
+
+
+async def test_rms_db_per_second_reads_raw_in_blocks(tmp_path, monkeypatch):
+    import numpy as np
+    from liveclips.ondemand import signals
+
+    monkeypatch.setattr(signals, "BLOCK_S", 1)  # força vários blocos
+    assert signals.SAMPLE_RATE == 2000
+    sr = signals.SAMPLE_RATE
+    t = np.arange(sr) / sr
+    tone = (0.8 * 32767 * np.sin(2 * np.pi * 200 * t)).astype(np.int16)
+    raw_data = np.concatenate([np.zeros(2 * sr, dtype=np.int16), tone])
+
+    async def fake_run(*cmd, timeout=300):
+        assert str(sr) in cmd
+        raw_data.tofile(cmd[-1])
+        return ""
+
+    rms = await signals.rms_db_per_second(tmp_path / "a.mp3", tmp_path, run=fake_run)
+    assert rms.shape == (3,)
+    assert rms[2] > rms[0] + 40
+    assert not (tmp_path / "audio.raw").exists()

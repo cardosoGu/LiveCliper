@@ -1,6 +1,7 @@
 """Sinais de interesse, 1 ponto por segundo: volume, "mais repetidos" e chat."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +10,8 @@ from ..processing.ffmpeg import run
 
 WEIGHTS = {"heatmap": 0.45, "chat": 0.35, "loudness": 0.20}
 AGREEMENT_BONUS = 0.15
-SAMPLE_RATE = 8000
+SAMPLE_RATE = 2000  # basta para o RMS por segundo; 4 h em 8 kHz passavam de 1 GB de RAM
+BLOCK_S = 600  # segundos de áudio lidos por vez
 
 
 def robust_norm(x: np.ndarray, low_q: float = 25, high_q: float = 99) -> np.ndarray:
@@ -67,15 +69,23 @@ def combine(signals: dict[str, np.ndarray | None]) -> np.ndarray:
     return score + AGREEMENT_BONUS * (agree >= 2)
 
 
+def _rms_db_from_raw(raw: Path) -> np.ndarray:
+    samples = np.memmap(raw, dtype=np.int16, mode="r") if raw.stat().st_size else np.zeros(0)
+    n = samples.size // SAMPLE_RATE
+    out = np.zeros(n)
+    for b in range(0, n, BLOCK_S):
+        e = min(b + BLOCK_S, n)
+        block = np.asarray(samples[b * SAMPLE_RATE:e * SAMPLE_RATE], dtype=np.float64)
+        out[b:e] = np.sqrt((block.reshape(e - b, SAMPLE_RATE) ** 2).mean(axis=1))
+    del samples
+    return 20 * np.log10(out / 32768 + 1e-9)
+
+
 async def rms_db_per_second(audio: Path, work_dir: Path, run=run) -> np.ndarray:
     raw = work_dir / "audio.raw"
     await run("ffmpeg", "-y", "-i", str(audio), "-f", "s16le", "-ac", "1",
               "-ar", str(SAMPLE_RATE), str(raw), timeout=1800)
-    samples = np.fromfile(raw, dtype=np.int16).astype(np.float32)
-    raw.unlink(missing_ok=True)
-    n = samples.size // SAMPLE_RATE
-    if n == 0:
-        return np.zeros(0)
-    per_sec = samples[: n * SAMPLE_RATE].reshape(n, SAMPLE_RATE)
-    rms = np.sqrt((per_sec ** 2).mean(axis=1))
-    return 20 * np.log10(rms / 32768 + 1e-9)
+    try:
+        return await asyncio.to_thread(_rms_db_from_raw, raw)
+    finally:
+        raw.unlink(missing_ok=True)
