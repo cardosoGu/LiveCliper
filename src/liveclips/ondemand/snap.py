@@ -75,7 +75,8 @@ def extend_past_reaction(end: float, words: list[dict], rms_db: np.ndarray | Non
 
 
 def snap_clip(words: list[dict], peak: float, start: float, end: float,
-              rms_db: np.ndarray | None = None) -> tuple[float, float] | None:
+              rms_db: np.ndarray | None = None,
+              max_len: float = MAX_LEN) -> tuple[float, float] | None:
     if not words:
         return None
     starts, ends = sentence_starts(words), sentence_ends(words)
@@ -88,13 +89,13 @@ def snap_clip(words: list[dict], peak: float, start: float, end: float,
         e = _nearest([w["end"] for w in words], end, e_lo, end + SEARCH)
     if s is None or e is None:
         return None
-    if e - s > MAX_LEN:  # o maior trecho ≤ 65 s que ainda contém o pico
+    if e - s > max_len:  # o maior trecho ≤ max_len que ainda contém o pico
         pairs = [(a, b) for a in starts if s <= a <= s_hi
-                 for b in ends if e_lo <= b <= e and b - a <= MAX_LEN]
+                 for b in ends if e_lo <= b <= e and b - a <= max_len]
         if not pairs:
             return None
         s, e = max(pairs, key=lambda p: p[1] - p[0])
-    e = min(extend_past_reaction(e, words, rms_db), s + MAX_LEN)
+    e = min(extend_past_reaction(e, words, rms_db), s + max_len)
     if e - s < MIN_LEN:
         return None
     return round(s, 2), round(e, 2)

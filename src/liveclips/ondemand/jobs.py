@@ -20,6 +20,7 @@ from ..processing.subtitles import build_cues, cues_to_ass
 from . import ingest, longtranscribe, signals
 from .source import Source, SourceError, resolve_source
 from .peaks import pick_peaks
+from .series import SERIES_MAX, SINGLE_MAX, split_parts
 from .snap import snap_clip
 from .topics import Topic, choose_topics
 
@@ -240,10 +241,25 @@ class OnDemandRunner:
 
     async def _cuts(self, job, meta, source, transcript, topics, rms) -> int:
         existing = {c.clip_id: c for c in self.db.job_candidates(job["id"])}
-        clips = [c for c in (snap_clip(transcript.words, t.peak, t.start, t.end, rms)
-                             for t in topics) if c is not None]
+        clips = []  # (início, fim, series_id, parte, partes), tempos relativos à fonte
+        for t in topics:
+            whole = snap_clip(transcript.words, t.peak, t.start, t.end, rms, max_len=SERIES_MAX)
+            if whole is None:
+                continue
+            parts = split_parts(transcript.words, *whole) if whole[1] - whole[0] > SINGLE_MAX else None
+            if parts is None and whole[1] - whole[0] > SINGLE_MAX:
+                single = snap_clip(transcript.words, t.peak, t.start, t.end, rms)
+                if single is None:
+                    continue
+                parts = [single]
+            parts = parts or [whole]
+            if len(parts) == 1:
+                clips.append((*parts[0], None, None, None))
+            else:
+                sid = f"{job['id']}:{int((source.start + whole[0]) * 10)}"
+                clips.extend((a, b, sid, n, len(parts)) for n, (a, b) in enumerate(parts, 1))
         made = 0
-        for i, (s, e) in enumerate(clips, 1):
+        for i, (s, e, sid, part, parts) in enumerate(clips, 1):
             clip_id = f"ondemand:{job['id']}:{int((source.start + s) * 10)}"
             cand = existing.get(clip_id)
             if cand is not None and not (cand.state is State.FAILED
@@ -254,6 +270,7 @@ class OnDemandRunner:
             try:
                 if cand is None:
                     cand = self._new_candidate(job, meta, source, clip_id, s, e)
+                    cand.series_id, cand.part, cand.parts = sid, part, parts
                     if self.db.insert_candidate(cand) is None:
                         continue  # já existia
                 await self._finish_cut(job, source, transcript, cand, s, e)

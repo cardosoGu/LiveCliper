@@ -37,7 +37,7 @@ def words(n=200):
     return out
 
 
-def make(db, tmp_path, meta=None, topics_exc=None, calls=None):
+def make(db, tmp_path, meta=None, topics_exc=None, calls=None, topic=None):
     calls = calls if calls is not None else []
 
     async def probe(url):
@@ -70,7 +70,7 @@ def make(db, tmp_path, meta=None, topics_exc=None, calls=None):
         calls.append("topics")
         if topics_exc:
             raise topics_exc
-        return [Topic(peak=40.0, start=30.0, end=60.0, why="boa")]
+        return [topic or Topic(peak=40.0, start=30.0, end=60.0, why="boa")]
 
     async def probe_dims(path):
         return 1920, 1080
@@ -93,6 +93,7 @@ async def test_happy_path_creates_ready_candidates(db, tmp_path):
     assert c.state is State.DETECTED and c.source == "ondemand" and c.rank == 1000.0
     assert c.platform == "youtube" and c.channel == "Podpah"
     assert c.start_s <= 34.0 and c.end_s >= 43.0
+    assert (c.series_id, c.part, c.parts) == (None, None, None)
     raw = Path(c.raw_path)
     assert raw.parent.name == str(c.id) and raw.exists()
     assert (raw.parent / "subs.ass").exists() and c.transcript
@@ -303,3 +304,17 @@ async def test_age_restricted_video_gets_a_clear_message(db, tmp_path):
     await r.process(db.get_job(jid))
     assert db.get_job(jid)["state"] == "failed"
     assert "restrição de idade" in notes.finished[-1][2]
+
+
+async def test_long_topic_becomes_a_series_of_parts(db, tmp_path):
+    # as palavras falsas só vão até ~120 s: o assunto de ~105 s cabe nelas
+    r, notes, _ = make(db, tmp_path, topic=Topic(peak=60.0, start=10.0, end=115.0, why="longo"))
+    jid = r.enqueue("https://youtu.be/x", "", 1, 2)
+    await r.process(db.get_job(jid))
+    cands = sorted(db.job_candidates(jid), key=lambda c: c.part)
+    assert len(cands) == 2
+    assert cands[0].series_id and cands[0].series_id == cands[1].series_id
+    assert [c.part for c in cands] == [1, 2] and all(c.parts == 2 for c in cands)
+    assert all(c.state is State.DETECTED for c in cands)
+    assert cands[0].end_s <= cands[1].start_s
+    assert any("recortando 2/2" in t for _, t in notes.progress)
