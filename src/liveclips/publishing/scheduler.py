@@ -67,6 +67,13 @@ class Scheduler:
         approved = [c for c in self.db.by_state(State.APPROVED, 200) if self._series_ready(c)]
         if not approved:
             return False
+        # série já começada (parte publicada): termina logo, é o mesmo post — sem
+        # intervalo nem limite diário
+        for c in sorted(approved, key=lambda x: x.id):
+            if c.series_id and any(p.state is State.PUBLISHED
+                                   for p in self.db.series_parts(c.series_id)):
+                await self.publish_series(c)
+                return True
         limit = self.runtime.post_max_per_day()
         posts_today = self.db.publications_count_since(local_midnight_utc(now))
         if posts_today >= limit:
@@ -81,7 +88,7 @@ class Scheduler:
                 return False
             c = min(approved, key=lambda x: x.id)  # ordem de aprovação
         if c.series_id:
-            await self.publish_series(c, now)
+            await self.publish_series(c)
         else:
             await self.publish(c, now)
         return True
@@ -93,22 +100,33 @@ class Scheduler:
         done = (State.APPROVED, State.PUBLISHED, State.FAILED)
         return all(p.state in done for p in self.db.series_parts(c.series_id))
 
-    async def publish_series(self, c: Candidate, now: datetime) -> None:
+    async def publish_series(self, c: Candidate) -> None:
         """Um post só: partes aprovadas da última para a primeira, com pausa entre elas.
-        Falha total numa parte não impede as outras."""
-        parts = [p for p in self.db.series_parts(c.series_id) if p.state is State.APPROVED]
-        for i, p in enumerate(sorted(parts, key=lambda x: x.part or 0, reverse=True)):
+        A ordem é estrita: falha total numa parte para a série (as menores continuam
+        aprovadas e retomam, da maior restante, após o backoff)."""
+        # plataformas fixadas uma vez; pausa durante a série não a interrompe
+        # (deliberado: a série é um post só)
+        publishers = self.enabled_publishers()
+        parts = sorted((p for p in self.db.series_parts(c.series_id) if p.state is State.APPROVED),
+                       key=lambda x: x.part or 0, reverse=True)
+        for i, part in enumerate(parts):
             if i:
                 await self.sleep(SERIES_GAP_S)
-            await self.publish(p, now)
+            fresh = self.db.get(part.id)
+            if fresh is None or fresh.state is not State.APPROVED:
+                continue  # descartada/alterada durante a pausa
+            if not await self.publish(fresh, self.now_fn(), publishers):
+                return
 
-    async def publish(self, c: Candidate, now: datetime) -> None:
+    async def publish(self, c: Candidate, now: datetime,
+                      publishers: list | None = None) -> bool:
+        """True se ao menos uma plataforma aceitou o post."""
         verdict = Verdict.model_validate_json(c.ai_json)
         caption = self._caption(c, verdict)
         if not await self.ensure_rendered(c, verdict):
             await self._notify_status(c)
-            return
-        publishers = self.enabled_publishers()
+            return False
+        publishers = self.enabled_publishers() if publishers is None else publishers
         results, errors = [], []
         url = ""
         if any(getattr(p, "needs_public_url", False) for p in publishers):
@@ -133,6 +151,7 @@ class Scheduler:
         else:
             await self._on_total_failure(c, now, errors)
         await self._notify_status(c)
+        return bool(results)
 
     @staticmethod
     def _caption(c: Candidate, verdict: Verdict) -> str:

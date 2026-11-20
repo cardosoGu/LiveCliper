@@ -364,17 +364,78 @@ async def test_series_waits_for_all_parts_approved(db, tmp_path):
     assert tk.jobs == []
 
 
-async def test_series_part_failure_does_not_stop_others(db, tmp_path):
-    cs = _series(db, tmp_path, [State.APPROVED] * 2)
+async def test_series_total_failure_stops_series_and_backs_off(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED] * 3)
+    ok = {"v": False}
 
     class Flaky(Pub):
         async def publish(self, job):
-            if job.caption.startswith("(2/2)"):
+            if not ok["v"] and job.caption.startswith("(3/3)"):
+                self.jobs.append(job)
                 raise PublishError("caiu")
             return await super().publish(job)
 
     tk = Flaky("tiktok")
-    s = _series_scheduler(db, [tk], cs[0].created_at + timedelta(minutes=5), [])
+    clock = {"now": cs[0].created_at + timedelta(minutes=5)}
+    cfg = load_settings({})
+
+    async def nosleep(_s):
+        pass
+
+    s = Scheduler(db, cfg, [tk], Media(), Notifier(), RuntimeSettings(db, cfg),
+                  now_fn=lambda: clock["now"], sleep=nosleep)
     await s.tick()
-    assert db.get(cs[0].id).state is State.PUBLISHED
-    assert db.get(cs[1].id).state is State.APPROVED
+    assert len(tk.jobs) == 1  # parte 2 e 1 NAO saem
+    assert all(db.get(c.id).state is State.APPROVED for c in cs)
+    assert s.retry_at is not None and len(s.notifier.alerts) == 1
+    ok["v"] = True
+    clock["now"] = s.retry_at + timedelta(seconds=1)
+    assert await s.tick()
+    assert [j.caption.split("\n")[0] for j in tk.jobs[1:]] == ["(3/3) t", "(2/3) t", "(1/3) t"]
+    assert s.retry_at is None
+
+
+async def test_partly_published_series_ignores_interval_and_daily_limit(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED, State.APPROVED, State.PUBLISHED])
+    now = cs[0].created_at + timedelta(minutes=5)
+    db.record_publication(cs[2].id, "tiktok", "x", "u", now)
+    tk = Pub("tiktok")
+    cfg = load_settings({})
+    rt = RuntimeSettings(db, cfg)
+    s = Scheduler(db, cfg, [tk], Media(), Notifier(), rt, now_fn=lambda: now,
+                  sleep=lambda _s: _noop())
+    # limite diario ja atingido e intervalo (45 min) nao passou
+    for _ in range(rt.post_max_per_day()):
+        other = make_candidate(clip_id=f"o{_}", channel="x", state=State.PUBLISHED)
+        db.insert_candidate(other)
+        db.record_publication(other.id, "tiktok", "y", "u", now)
+    assert await s.tick()
+    assert [j.caption.split("\n")[0] for j in tk.jobs] == ["(2/3) t", "(1/3) t"]
+
+
+async def _noop():
+    pass
+
+
+async def test_series_uses_fresh_clock_and_skips_discarded_part(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED] * 3)
+    base = cs[0].created_at + timedelta(minutes=5)
+    clock = {"now": base}
+    cfg = load_settings({})
+
+    async def sleep(sec):
+        clock["now"] += timedelta(seconds=sec)
+        if sec and not clock.get("done"):
+            clock["done"] = True
+            c = db.get(cs[1].id)
+            c.state = State.DISCARDED
+            db.update(c)
+
+    tk = Pub("tiktok")
+    s = Scheduler(db, cfg, [tk], Media(), Notifier(), RuntimeSettings(db, cfg),
+                  now_fn=lambda: clock["now"], sleep=sleep)
+    await s.tick()
+    assert [j.caption.split("\n")[0] for j in tk.jobs] == ["(3/3) t", "(1/3) t"]
+    assert db.get(cs[1].id).state is State.DISCARDED
+    times = sorted(r["published_at"] for r in db.conn.execute("SELECT published_at FROM publications"))
+    assert times[0] != times[1]
