@@ -48,20 +48,16 @@ async def test_choose_topics_uses_the_injected_ai():
     assert await choose_topics(load_settings({}), "t", WORDS, [], "", ask=ask) == []
 
 
-async def test_ask_json_falls_back_and_raises_when_nothing_works():
-    cfg = load_settings({"GEMINI_API_KEY1": "g", "ANTHROPIC_API_KEY": "a"})
+async def test_ask_json_parses_and_raises_when_gemini_fails():
+    cfg = load_settings({"GEMINI_API_KEY1": "g"})
+
+    async def good(cfg, prompt, model_cls):
+        return '{"cortes": []}'
+
+    assert (await ask_json(cfg, "p", TopicsAnswer, gemini=good)).cortes == []
 
     async def bad(cfg, prompt, model_cls):
         raise RuntimeError("429")
 
-    async def good(cfg, prompt, model_cls, db=None):
-        return '{"cortes": []}'
-
-    out = await ask_json(cfg, "p", TopicsAnswer, gemini=bad, claude=good)
-    assert out.cortes == []
-
-    async def bad_claude(cfg, prompt, model_cls, db=None):
-        raise RuntimeError("caiu")
-
     with pytest.raises(AIUnavailable):
-        await ask_json(cfg, "p", TopicsAnswer, gemini=bad, claude=bad_claude)
+        await ask_json(cfg, "p", TopicsAnswer, gemini=bad)

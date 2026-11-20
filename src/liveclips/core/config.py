@@ -23,9 +23,6 @@ class Settings:
     gemini_api_key: str  # a primeira chave (compatibilidade)
     gemini_api_keys: tuple[str, ...]
     gemini_model: str
-    anthropic_api_key: str
-    claude_model: str
-    claude_daily_budget_usd: float
     groq_api_key: str
     # discord
     discord_bot_token: str
@@ -104,9 +101,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         gemini_api_key=(gemini_keys[0] if gemini_keys else ""),
         gemini_api_keys=gemini_keys,
         gemini_model=s("GEMINI_MODEL", "gemini-3.5-flash,gemini-3.8-flash"),
-        anthropic_api_key=s("ANTHROPIC_API_KEY"),
-        claude_model=s("CLAUDE_MODEL", "claude-opus-5-5"),
-        claude_daily_budget_usd=f("CLAUDE_DAILY_BUDGET_USD", 3.0),
         groq_api_key=s("GROQ_API_KEY"),
         discord_bot_token=s("DISCORD_BOT_TOKEN"),
         discord_channel_id=i("DISCORD_CHANNEL_ID", 0),

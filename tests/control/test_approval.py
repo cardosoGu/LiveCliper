@@ -117,6 +117,10 @@ async def test_approve_and_now_and_discard(db, tmp_path):
     assert db.get(d.id).state is State.DISCARDED
     assert not (tmp_path / str(d.id)).exists()  # arquivos apagados
     assert "já foi decidido" in await desk.handle("approve", a.id)
+    # cada decisão vira exemplo para a IA (a série conta uma vez)
+    fb = {r["candidate_id"]: r for r in db.recent_feedback("aprovado", 10)}
+    assert set(fb) == {a.id, b.id} and fb[a.id]["title"] == V.title
+    assert [r["candidate_id"] for r in db.recent_feedback("descartado", 10)] == [d.id]
     # o card some com os botões depois da decisão
     assert any(e[1] == a.id and e[3] is False and "aprovado" in e[2] for e in t.edits)
 
@@ -400,3 +404,13 @@ async def test_series_approve_from_part_2_approves_all(db, tmp_path):
     await desk.tick()
     await desk.handle("approve", p2.id)
     assert db.get(p1.id).state is State.APPROVED and db.get(p2.id).state is State.APPROVED
+
+
+async def test_discard_with_reason_is_saved_for_the_ai(db, tmp_path):
+    desk, _, _ = make_desk(db, tmp_path)
+    c = awaiting(db)
+    await desk.tick()
+    assert "Descartado" in await desk.handle("discard", c.id, note="  sem desfecho  ")
+    assert db.get(c.id).reason == "descartado no Discord: sem desfecho"
+    (row,) = db.recent_feedback("descartado", 10)
+    assert row["note"] == "sem desfecho" and row["ai_score"] == 7.5

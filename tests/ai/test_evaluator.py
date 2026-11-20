@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from liveclips.core.config import load_settings
-from liveclips.ai.claude import claude_cost_usd
 from liveclips.ai.evaluator import AIUnavailable, Evaluator
 from liveclips.ai.verdict import VerdictError, parse_verdict
 
@@ -16,7 +15,7 @@ VIDEO = Path("v.mp4")
 
 
 def cfg(**env):
-    base = {"GEMINI_API_KEY": "g", "ANTHROPIC_API_KEY": "a"}
+    base = {"GEMINI_API_KEY": "g"}
     base.update(env)
     return load_settings(base)
 
@@ -33,59 +32,33 @@ def test_parse_verdict_rejects_garbage():
         parse_verdict("isso não é json")
 
 
-async def test_gemini_ok_skips_claude(db):
+async def test_gemini_ok(db):
     async def gemini(path, prompt):
         return GOOD
 
-    async def claude(path, prompt):
-        raise AssertionError("não deveria chamar o Claude")
-
-    v = await Evaluator(cfg(), db, gemini, claude).evaluate(VIDEO, VIDEO, {})
+    v = await Evaluator(cfg(), db, gemini).evaluate(VIDEO, {})
     assert v.score == 8.5 and v.hashtags == ["#GTA6", "#gtarp"]
 
 
-async def test_gemini_failure_falls_back_to_claude_and_tracks_spend(db):
+async def test_gemini_failure_raises_unavailable(db):
     async def gemini(path, prompt):
         raise RuntimeError("quota")
 
-    async def claude(path, prompt):
-        return GOOD, 0.06
-
-    ev = Evaluator(cfg(), db, gemini, claude)
-    await ev.evaluate(VIDEO, VIDEO, {})
-    await ev.evaluate(VIDEO, VIDEO, {})
-    assert ev.claude_spent_today() == pytest.approx(0.12)
-
-
-async def test_budget_exhausted_raises(db):
-    async def gemini(path, prompt):
-        raise RuntimeError("quota")
-
-    async def claude(path, prompt):
-        return GOOD, 5.0
-
-    ev = Evaluator(cfg(CLAUDE_DAILY_BUDGET_USD="3"), db, gemini, claude)
-    await ev.evaluate(VIDEO, VIDEO, {})  # gasta 5 > 3
     with pytest.raises(AIUnavailable):
-        await ev.evaluate(VIDEO, VIDEO, {})
+        await Evaluator(cfg(), db, gemini).evaluate(VIDEO, {})
 
 
 async def test_no_keys_raises(db):
     with pytest.raises(AIUnavailable):
-        await Evaluator(load_settings({}), db).evaluate(VIDEO, VIDEO, {})
+        await Evaluator(load_settings({}), db).evaluate(VIDEO, {})
 
 
 async def test_refusal_becomes_unsafe(db):
-    async def claude(path, prompt):
-        return REFUSAL, 0.01
+    async def gemini(path, prompt):
+        return REFUSAL
 
-    v = await Evaluator(cfg(GEMINI_API_KEY=""), db, None, claude).evaluate(VIDEO, VIDEO, {})
+    v = await Evaluator(cfg(), db, gemini).evaluate(VIDEO, {})
     assert v.safe is False
-
-
-def test_claude_cost():
-    assert claude_cost_usd("claude-opus-5-5", 1_000_000, 100_000) == pytest.approx(6.0)
-    assert claude_cost_usd("claude-haiku-5-5", 1_000_000, 0) == pytest.approx(0.10)
 
 
 async def test_gemini_tries_next_model_when_one_fails(tmp_path, monkeypatch):
@@ -177,7 +150,7 @@ def test_facecam_slightly_out_of_bounds_is_trimmed():
     assert v.facecam.y == 0 and abs(v.facecam.x + v.facecam.w - 1.0) < 1e-9
 
 
-def test_claude_schema_requires_nullable_facecam():
+def test_schema_requires_nullable_facecam():
     from liveclips.ai.verdict import VERDICT_SCHEMA
 
     assert "facecam" in VERDICT_SCHEMA["required"]

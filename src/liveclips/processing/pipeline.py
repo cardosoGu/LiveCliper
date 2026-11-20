@@ -108,7 +108,7 @@ class Pipeline:
                     "transcript": " … ".join(x.transcript for x in group)}
             if c.series_id:
                 meta["parts"] = c.parts
-            verdict = await self.evaluator.evaluate(Path(c.raw_path), Path(c.raw_path), meta)
+            verdict = await self.evaluator.evaluate(Path(c.raw_path), meta)
         except AIUnavailable:
             self.ai_down = True
             self._set(c, State.DETECTED, "IA indisponível, aguardando")

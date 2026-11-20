@@ -9,7 +9,7 @@
 cp .env.example .env
 ```
 Abra o `.env` e preencha as chaves. O mínimo para rodar o fluxo de aprovação é:
-- `GEMINI_API_KEY` (e/ou `ANTHROPIC_API_KEY`) e `GROQ_API_KEY`
+- `GEMINI_API_KEY1` e `GROQ_API_KEY`
 - `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_ADMIN_USER_ID`
 
 Nota: as plataformas ligadas são controladas pelo `/plataforma` no Discord; `DRY_RUN=1` só faz todas começarem desligadas.
@@ -39,7 +39,6 @@ Só para cortar live em andamento da Twitch: em <https://dev.twitch.tv/console/a
 ### IA
 - Gemini: <https://aistudio.google.com/apikey>
 - Groq: <https://console.groq.com/keys>
-- Anthropic (reserva paga): <https://platform.claude.com> → API Keys, e adicione créditos.
 
 ### Instagram
 1. A conta precisa ser **Business ou Creator** e estar ligada a uma **Página do Facebook**.

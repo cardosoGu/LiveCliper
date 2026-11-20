@@ -19,9 +19,9 @@ class FakeEvaluator:
         self.result = result
         self.calls = 0
 
-    async def evaluate(self, video, raw, meta):
+    async def evaluate(self, video, meta):
         self.calls += 1
-        self.videos = (video, raw)
+        self.video = video
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -47,7 +47,7 @@ async def test_good_clip_awaits_approval(db, tmp_path: Path):
     assert got.state is State.AWAITING_APPROVAL and got.ai_score == 8.0
     # o vertical só é renderizado depois de aprovado (no scheduler); a IA vê o original
     assert got.vertical_path is None
-    assert p.evaluator.videos == (Path(got.raw_path), Path(got.raw_path))
+    assert p.evaluator.video == Path(got.raw_path)
     assert p.evals_today() == 1
 
 
@@ -121,9 +121,9 @@ def make_series(db, tmp_path, result, n=3, skip_raw=None, only_parts=None, **env
 
 
 class MetaEvaluator(FakeEvaluator):
-    async def evaluate(self, video, raw, meta):
+    async def evaluate(self, video, meta):
         self.meta = meta
-        return await super().evaluate(video, raw, meta)
+        return await super().evaluate(video, meta)
 
 
 def series_verdict(score=8.0):

@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   thread_id INTEGER, status_message_id INTEGER, error TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id INTEGER NOT NULL, decision TEXT NOT NULL, title TEXT NOT NULL,
+  ai_score REAL, ai_reason TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+);
 """
 
 _COLS = [
@@ -233,6 +239,24 @@ class DB:
         return [_from_row(r) for r in rows]
 
     # --- publicações ------------------------------------------------------
+    # --- gosto do admin (✅/❌ viram exemplos para a IA) ---------------------
+    def record_feedback(self, candidate_id: int, decision: str, title: str,
+                        ai_score: float | None, ai_reason: str, transcript: str,
+                        note: str = "") -> None:
+        self.conn.execute(
+            "INSERT INTO feedback (candidate_id, decision, title, ai_score, ai_reason,"
+            " transcript, note, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (candidate_id, decision, title, ai_score, ai_reason or "", transcript or "",
+             note or "", utcnow().isoformat()))
+        self.conn.commit()
+
+    def recent_feedback(self, decision: str, limit: int) -> list[dict]:
+        """Os mais recentes primeiro; com motivo do admin antes dos sem motivo."""
+        rows = self.conn.execute(
+            "SELECT * FROM feedback WHERE decision=? ORDER BY note = '', id DESC LIMIT ?",
+            (decision, limit)).fetchall()
+        return [dict(r) for r in rows]
+
     def record_publication(self, candidate_id: int, platform: str, post_id: str,
                            url: str, at: datetime) -> None:
         self.conn.execute(

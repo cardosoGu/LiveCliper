@@ -30,8 +30,8 @@ log = logging.getLogger("liveclips")
 
 def check_settings(cfg: Settings) -> list[str]:
     missing: list[str] = []
-    if not (cfg.gemini_api_keys or cfg.anthropic_api_key):
-        missing.append("GEMINI_API_KEY1 (ou GEMINI_API_KEY) ou ANTHROPIC_API_KEY")
+    if not (cfg.gemini_api_keys or cfg.gemini_api_key):
+        missing.append("GEMINI_API_KEY1 (ou GEMINI_API_KEY)")
     return missing
 
 

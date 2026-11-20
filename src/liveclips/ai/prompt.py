@@ -50,14 +50,16 @@ layout: "podcast" quando não há jogo na tela (conversa, podcast, Just Chatting
 subject: retângulo do rosto de quem mais fala (mesmo formato do facecam), ou null."""
 
 
-def build_prompt(meta: dict) -> str:
+def build_prompt(meta: dict, taste: str = "") -> str:
     transcript = (meta.get("transcript") or "").strip() or "(sem fala detectada)"
     language = meta.get("language") or "não detectado"
     series = ""
     if meta.get("parts"):
         series = (f"Série: este assunto foi dividido em {meta['parts']} partes; a transcrição "
                   "abaixo é da série inteira. Avalie a série toda.\n")
+    taste = taste + "\n\n" if taste else ""
     return (
+        f"{taste}"
         f"Plataforma: {meta.get('platform')} | Canal: {meta.get('channel')} | "
         f"Espectadores: {meta.get('viewers')} | Origem: {meta.get('source')}\n"
         f"Idioma detectado na fala: {language}\n"

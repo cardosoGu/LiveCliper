@@ -268,6 +268,9 @@ class DiscordBot:
                     await interaction.response.send_message(f"Erro: {e}"[:2000],
                                                             ephemeral=True)
                 return
+            if action == "discard":
+                await interaction.response.send_modal(DiscardModal(self.desk, cid))
+                return
             await interaction.response.defer(ephemeral=True, thinking=True)
             try:
                 result = await self.desk.handle(action, cid)
@@ -355,6 +358,29 @@ class EditModal(discord.ui.Modal, title="Editar clipe"):
         except Exception as e:
             log.exception("salvar edição do clipe %s falhou", self.candidate_id)
             msg = f"Erro ao salvar: {e}"
+        await interaction.followup.send(msg[:2000], ephemeral=True)
+
+
+class DiscardModal(discord.ui.Modal, title="Descartar clipe"):
+    """O motivo é opcional; quando escrito, a IA passa a usá-lo como regra."""
+
+    def __init__(self, desk: ApprovalDesk, candidate_id: int):
+        super().__init__(timeout=600)
+        self.desk = desk
+        self.candidate_id = candidate_id
+        self.why = discord.ui.TextInput(
+            label="Por quê? (opcional — a IA aprende com isso)",
+            placeholder="ex.: precisa de contexto, começo parado, sem desfecho…",
+            style=discord.TextStyle.paragraph, max_length=500, required=False)
+        self.add_item(self.why)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            msg = await self.desk.handle("discard", self.candidate_id, note=str(self.why.value))
+        except Exception as e:
+            log.exception("descartar o clipe %s falhou", self.candidate_id)
+            msg = f"Erro ao descartar: {e}"
         await interaction.followup.send(msg[:2000], ephemeral=True)
 
 

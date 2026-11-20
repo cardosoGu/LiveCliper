@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
+from ..ai.taste import taste_block
 from ..ai.text import ask_json
 from .snap import MIN_POST_ROLL, MIN_PRE_ROLL, sentences
 
@@ -54,7 +55,7 @@ def fmt_time(t: float) -> str:
 
 
 def build_topics_prompt(title: str, words: list[dict], peaks: list[int],
-                        instructions: str) -> str:
+                        instructions: str, taste: str = "") -> str:
     sents = sentences(words)
     blocks = []
     for k, p in enumerate(peaks):
@@ -63,6 +64,8 @@ def build_topics_prompt(title: str, words: list[dict], peaks: list[int],
         blocks.append(f"### Pico {k} (em {fmt_time(p)})\n" + ("\n".join(lines) or "(sem fala)"))
     head = TOPICS_PROMPT.format(title=title or "(sem título)",
                                 instructions=instructions.strip() or "(nenhuma)")
+    if taste:
+        head += "\n\n" + taste
     return head + "\n\n" + "\n\n".join(blocks)
 
 
@@ -87,6 +90,6 @@ async def choose_topics(cfg, title: str, words: list[dict], peaks: list[int],
                         instructions: str, ask=ask_json, db=None) -> list[Topic]:
     if not peaks:
         return []
-    answer = await ask(cfg, build_topics_prompt(title, words, peaks, instructions),
-                       TopicsAnswer, db=db)
+    prompt = build_topics_prompt(title, words, peaks, instructions, taste_block(db))
+    answer = await ask(cfg, prompt, TopicsAnswer, db=db)
     return parse_topics(answer, peaks)

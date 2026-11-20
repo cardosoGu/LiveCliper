@@ -116,7 +116,6 @@ class Monitor:
         last_hour = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "nada"
         paused = self.db.kv_get("paused") == "1"
         min_score = self.db.kv_get("min_score", str(self.cfg.ai_min_score))
-        spend = float(self.db.kv_get(f"claude_spend:{day}", "0") or 0)
         evals = int(float(self.db.kv_get(f"ai_evals:{day}", "0") or 0))
         return "\n".join([
             f"**Status:** {'⏸️ pausado' if paused else '▶️ ativo'}",
@@ -124,7 +123,6 @@ class Monitor:
             f"Última hora: {last_hour}",
             f"Posts hoje: {self.db.publications_count_since(local_midnight_utc(now))}",
             f"Avaliações de IA hoje: {evals}/{self.cfg.ai_daily_budget}",
-            f"Gasto Claude hoje: US$ {spend:.2f} / {self.cfg.claude_daily_budget_usd:.2f}",
             f"Nota mínima: {min_score}",
         ])
 

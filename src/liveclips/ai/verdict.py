@@ -1,4 +1,4 @@
-"""Formato da decisão da IA (igual para Gemini e Claude) e sua validação."""
+"""Formato da decisão da IA e sua validação."""
 from __future__ import annotations
 
 from pydantic import BaseModel, ValidationError

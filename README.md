@@ -25,12 +25,14 @@ link no #gerar-clipes ─► baixa o áudio ─► transcreve ─► acha os pic
   texto que marque o começo e o fim de cada assunto.
 - **Corta bem**: começa e termina em frase, nunca no meio de uma palavra, espera a risada acabar;
   cada corte tem de 15 a 65 s.
-- **Avalia em vídeo** (Gemini, com Claude de reserva): nota de 0 a 10, segurança, título-gancho,
+- **Avalia em vídeo** (Gemini): nota de 0 a 10, segurança, título-gancho,
   legenda, hashtags e onde está a webcam.
 - **Renderiza o vertical** 1080×1920: webcam em cima e jogo embaixo (ou tela cheia sem webcam),
   legenda palavra a palavra e título-gancho animado.
 - **Você decide**: cada corte chega no `#aprovação` com o vídeo e quatro botões. Nada é publicado
   sem o seu ✅.
+- **Aprende o seu gosto**: cada ✅ e ❌ (com o motivo que você escrever) vira exemplo para a IA,
+  tanto na escolha dos assuntos quanto na nota. Com o tempo ela corta e avalia do seu jeito.
 - **Retoma de onde parou**: cada etapa de um pedido fica salva; um reinício no meio continua dali.
 
 ## Como usar
@@ -47,7 +49,7 @@ link no #gerar-clipes ─► baixa o áudio ─► transcreve ─► acha os pic
    - **✅ Aprovar** — entra na fila de publicação (respeita o intervalo e o limite por dia);
    - **⚡ Agora** — publica no próximo minuto (respeita só o limite por dia);
    - **✏️ Editar** — troca o título-gancho e a legenda; o vídeo é refeito;
-   - **❌ Descartar** — apaga o corte.
+   - **❌ Descartar** — abre uma caixa para você dizer **por quê** (opcional) e apaga o corte.
 5. Depois de publicado, o card mostra os links. Se uma plataforma falhar, aparece **🔁** para
    reenviar só para ela.
 
@@ -89,8 +91,7 @@ O `.env.example` traz todas as variáveis com comentários. As principais:
 | `DISCORD_BOT_TOKEN`, `DISCORD_ADMIN_USER_ID` | o bot e quem pode mandar nele |
 | `DISCORD_CHANNEL_ID` | o canal `#logs` (avisos e erros) |
 | `DISCORD_APPROVAL_CHANNEL_ID`, `DISCORD_PANEL_CHANNEL_ID`, `DISCORD_LINKS_CHANNEL_ID` | os outros canais; vazios = o bot cria |
-| `GEMINI_API_KEY1..3`, `GEMINI_MODEL` | IA principal (tenta cada modelo com cada chave) |
-| `ANTHROPIC_API_KEY`, `CLAUDE_DAILY_BUDGET_USD` | IA de reserva, com teto de gasto por dia |
+| `GEMINI_API_KEY1..3`, `GEMINI_MODEL` | a IA (tenta cada modelo com cada chave) |
 | `GROQ_API_KEY` | transcrição (Whisper) |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | opcional: só para live da Twitch em andamento |
 | `IG_*`, `TIKTOK_*`, `YT_*` | plataformas de publicação |
@@ -135,7 +136,7 @@ src/liveclips/
     topics.py            IA de texto escolhe começo e fim de cada assunto
     snap.py              bordas em frase/pausa, sem cortar palavra nem risada
     jobs.py              a fila de pedidos, em etapas retomáveis
-  ai/                  avaliação em vídeo (Gemini → Claude), prompt, IA de texto
+  ai/                  avaliação em vídeo (Gemini), prompt, IA de texto, gosto do admin
   processing/          pipeline de avaliação, ffmpeg (render vertical), legendas, limpeza
   publishing/          agendador, Instagram, TikTok, YouTube, servidor de mídia
   control/             bot do Discord, #aprovação, #painel, configurações do painel

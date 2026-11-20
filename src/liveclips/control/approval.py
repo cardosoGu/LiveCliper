@@ -175,7 +175,7 @@ class ApprovalDesk:
         return "\n".join(lines)
 
     # --- ações ------------------------------------------------------------
-    async def handle(self, action: str, candidate_id: int) -> str:
+    async def handle(self, action: str, candidate_id: int, note: str = "") -> str:
         c = self.db.get(candidate_id)
         if c is None:
             return "Clipe não encontrado."
@@ -196,6 +196,9 @@ class ApprovalDesk:
         if c.state is not State.AWAITING_APPROVAL:
             return f"Esse clipe já foi decidido ({c.state.value})."
         group = self._group(c)
+        note = " ".join((note or "").split())[:500]
+        if action in ("approve", "now", "discard"):
+            self._learn(group[0], "descartado" if action == "discard" else "aprovado", note)
         if action in ("approve", "now"):
             for p in group:
                 p.state = State.APPROVED
@@ -209,7 +212,7 @@ class ApprovalDesk:
         if action == "discard":
             for p in group:
                 p.state = State.DISCARDED
-                p.reason = "descartado no Discord"
+                p.reason = "descartado no Discord" + (f": {note}" if note else "")
                 self._delete_media(p)
                 p.raw_path = p.vertical_path = None
                 self.db.update(p)
@@ -217,6 +220,17 @@ class ApprovalDesk:
                 await self.on_status(p)
             return "❌ Descartado."
         return "Ação desconhecida."
+
+    def _learn(self, c: Candidate, decision: str, note: str) -> None:
+        """Guarda a decisão como exemplo para a IA (a série conta uma vez, pela Parte 1)."""
+        try:
+            v = Verdict.model_validate_json(c.ai_json)
+            parts = self._group(c) if c.series_id else [c]
+            transcript = " … ".join(p.transcript or "" for p in parts)
+            self.db.record_feedback(c.id, decision, v.title, c.ai_score, v.reason,
+                                    transcript, note)
+        except Exception as e:  # aprender nunca pode travar a decisão
+            log.warning("guardar a decisão do clipe %s falhou: %s", c.id, e)
 
     def _group(self, c: Candidate) -> list[Candidate]:
         """O clipe sozinho, ou todas as partes da série que ainda aguardam aprovação."""
@@ -299,7 +313,8 @@ class ApprovalDesk:
                 line += f"\n📌 TikTok: publique as partes do app na ordem {c.parts} → 1"
             return line
         if c.state is State.DISCARDED:
-            return "❌ descartado"
+            why = (c.reason or "").removeprefix("descartado no Discord").removeprefix(": ")
+            return "❌ descartado" + (f" — {why}" if why else "")
         if c.state is State.FAILED:
             return f"💥 falhou: {c.reason}"
         return ""
