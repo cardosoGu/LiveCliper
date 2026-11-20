@@ -1,7 +1,7 @@
 [project]
 name = "liveclips"
 version = "0.1.0"
-description = "Clipa lives BR de GTA 6, avalia com IA e publica automaticamente."
+description = "Corta os melhores momentos de vídeos e lives (YouTube, Twitch, Kick) a partir de um link no Discord, avalia com IA e publica o que for aprovado."
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27",

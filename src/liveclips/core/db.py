@@ -112,11 +112,6 @@ class DB:
         row = self.conn.execute("SELECT * FROM candidates WHERE id=?", (cid,)).fetchone()
         return _from_row(row) if row else None
 
-    def get_by_clip_id(self, clip_id: str) -> Candidate | None:
-        row = self.conn.execute(
-            "SELECT * FROM candidates WHERE clip_id=?", (clip_id,)).fetchone()
-        return _from_row(row) if row else None
-
     def update(self, c: Candidate) -> None:
         if c.id is None:
             raise ValueError("candidato sem id")
@@ -152,13 +147,6 @@ class DB:
              State.PROCESSING.value, State.FAILED.value, "recortando (sob demanda)"),
         ).fetchall()
         return {int(r["id"]) for r in rows}
-
-    def channel_candidates_since(self, channel: str, since: datetime) -> list[Candidate]:
-        rows = self.conn.execute(
-            "SELECT * FROM candidates WHERE channel=? AND created_at>=?",
-            (channel.lower(), since.isoformat()),
-        ).fetchall()
-        return [_from_row(r) for r in rows]
 
     def reset_processing(self) -> int:
         cur = self.conn.execute(

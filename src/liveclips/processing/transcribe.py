@@ -15,8 +15,6 @@ import httpx
 log = logging.getLogger(__name__)
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 _LOCAL_MODEL = None
-PORTUGUESE = {"pt", "pt-br", "portuguese"}
-MIN_WORDS_TO_TRUST_LANGUAGE = 5
 
 
 @dataclass
@@ -29,11 +27,6 @@ class Transcript:
     def text(self) -> str:
         return " ".join(s["text"].strip() for s in self.segments).strip()
 
-    def is_clearly_not_portuguese(self) -> bool:
-        """Só afirma 'não é português' com fala suficiente para confiar na detecção."""
-        if not self.language or len(self.text.split()) < MIN_WORDS_TO_TRUST_LANGUAGE:
-            return False
-        return self.language.strip().lower() not in PORTUGUESE
 
 
 async def transcribe_groq(audio: Path, api_key: str, http: httpx.AsyncClient) -> Transcript:

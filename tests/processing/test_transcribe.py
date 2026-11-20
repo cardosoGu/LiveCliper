@@ -42,12 +42,3 @@ async def test_transcribe_fallback_order(tmp_path: Path):
     assert calls == ["groq", "local"]
     empty = await transcribe(tmp_path, "", None, bad_groq, bad_local)
     assert empty.segments == [] and empty.language is None
-
-
-def test_language_detection_needs_enough_speech():
-    seg = lambda text: [{"start": 0, "end": 1, "text": text}]
-    assert Transcript(seg("oh my god he fell off the building"), "english").is_clearly_not_portuguese()
-    assert not Transcript(seg("mano ele caiu do prédio kkkk"), "portuguese").is_clearly_not_portuguese()
-    assert not Transcript(seg("pt"), "pt").is_clearly_not_portuguese()
-    assert not Transcript(seg("oh no"), "english").is_clearly_not_portuguese()  # pouca fala
-    assert not Transcript([], None).is_clearly_not_portuguese()

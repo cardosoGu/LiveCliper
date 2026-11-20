@@ -26,14 +26,16 @@ class State(StrEnum):
 
 @dataclass
 class Candidate:
-    platform: str  # "twitch" | "kick"
-    source: str  # "ondemand"
+    platform: str  # "youtube" | "twitch" | "kick" | "outro"
+    source: str  # "ondemand" (linhas antigas: "chat_spike", "twitch_public", …)
     clip_id: str  # único, com prefixo da plataforma
     clip_url: str
     channel: str
     created_at: datetime
     duration: float = 30.0
     title: str = ""
+    # viewers, view_count, spike_score, rank e extra_clip_url vêm do clipador em tempo real
+    # (removido); continuam aqui só porque as colunas existem no banco.
     viewers: int = 0
     view_count: int = 0
     spike_score: float = 0.0
