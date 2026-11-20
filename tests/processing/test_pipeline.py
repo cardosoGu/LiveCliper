@@ -181,3 +181,48 @@ async def test_series_ai_unavailable_returns_to_detected(db, tmp_path):
     await p.tick()
     assert p.ai_down
     assert all(x.state is State.DETECTED for x in db.series_parts("ser"))
+
+
+async def test_series_waits_while_other_part_is_being_cut(db, tmp_path):
+    from liveclips.ondemand.jobs import CUTTING_REASON
+    p = make_series(db, tmp_path, series_verdict(8.0), n=2, skip_raw=2)
+    p2 = db.series_parts("ser")[1]
+    p2.state, p2.reason = State.FAILED, CUTTING_REASON
+    db.update(p2)
+    await p.tick()
+    assert p.evaluator.calls == 0 and p.evals_today() == 0
+    one, two = db.series_parts("ser")
+    assert one.state is State.DETECTED and one.reason == "aguardando as outras partes da série"
+    assert two.state is State.FAILED and two.reason == CUTTING_REASON
+    raw = tmp_path / "raw2.mp4"
+    raw.write_bytes(b"raw")
+    two.raw_path, two.transcript, two.state = str(raw), "fala2", State.DETECTED
+    db.update(two)
+    await p.tick()
+    assert p.evaluator.calls == 1
+    assert all(x.state is State.AWAITING_APPROVAL for x in db.series_parts("ser"))
+
+
+async def test_orphan_part_inherits_decision(db, tmp_path):
+    p = make_series(db, tmp_path, verdict(8.0), n=2)
+    one, two = db.series_parts("ser")
+    v = series_verdict(8.0)
+    one.state, one.ai_score, one.ai_json, one.reason = (
+        State.AWAITING_APPROVAL, 8.0, v.model_dump_json(), "ok")
+    db.update(one)
+    assert await p.tick() == 0
+    assert p.evaluator.calls == 0
+    two = db.series_parts("ser")[1]
+    assert two.state is State.AWAITING_APPROVAL and two.ai_score == 8.0 and two.reason == "ok"
+    assert Verdict.model_validate_json(two.ai_json).title == "No capítulo anterior"
+
+
+async def test_orphan_part_fails_when_part1_failed(db, tmp_path):
+    p = make_series(db, tmp_path, verdict(8.0), n=2)
+    one = db.series_parts("ser")[0]
+    one.state = State.FAILED
+    db.update(one)
+    await p.tick()
+    two = db.series_parts("ser")[1]
+    assert two.state is State.FAILED and two.reason == "a série já foi decidida sem esta parte"
+    assert p.evaluator.calls == 0

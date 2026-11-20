@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import Callable
 
 from ..ai.evaluator import AIUnavailable, Evaluator
+from ..ai.verdict import Verdict
 from ..core.config import Settings
 from ..core.db import DB
 from ..core.models import Candidate, State
 from ..core.timeutil import local_day, utcnow
+from ..ondemand.jobs import CUTTING_REASON
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +53,31 @@ class Pipeline:
     def min_score(self) -> float:
         return float(self.db.kv_get("min_score", str(self.cfg.ai_min_score)))
 
+    def _settle_orphans(self) -> None:
+        """Parte 2+ DETECTED cuja Parte 1 já não está na fila (recorte órfão): herda a
+        decisão da Parte 1 ou falha, para o pedido não ficar esperando para sempre."""
+        for c in self.db.by_state(State.DETECTED, 500):
+            if not (c.series_id and c.part and c.part > 1):
+                continue
+            first = next((x for x in self.db.series_parts(c.series_id) if x.part == 1), None)
+            if first and first.state in (State.DETECTED, State.PROCESSING):
+                continue
+            if first and first.state in (State.REJECTED_AI, State.AWAITING_APPROVAL):
+                c.ai_score = first.ai_score
+                c.ai_json = self._part_json(first.ai_json, c.part)
+                self._set(c, first.state, first.reason)
+            else:
+                self._set(c, State.FAILED, "a série já foi decidida sem esta parte")
+
+    @staticmethod
+    def _part_json(ai_json: str | None, n: int) -> str | None:
+        if not ai_json:
+            return ai_json
+        v = Verdict.model_validate_json(ai_json)
+        return v.model_copy(update={"title": v.series_recap or f"PARTE {n}"}).model_dump_json()
+
     async def tick(self) -> int:
+        self._settle_orphans()
         # partes 2+ de uma série esperam: quem decide é a Parte 1, com a série inteira
         live = [c for c in self.db.by_state(State.DETECTED, 500) if c.part in (None, 1)]
         budget = self.cfg.ai_daily_budget - self.evals_today()
@@ -66,7 +92,12 @@ class Pipeline:
         group = [c]
         try:
             if c.series_id:
-                group = [c if x.id == c.id else x for x in self.db.series_parts(c.series_id)]
+                parts = [c if x.id == c.id else x for x in self.db.series_parts(c.series_id)]
+                if any(x.state is State.FAILED and x.reason == CUTTING_REASON for x in parts):
+                    # outras partes ainda sendo recortadas pelo sob demanda: espera
+                    self._set(c, State.DETECTED, "aguardando as outras partes da série")
+                    return
+                group = [x for x in parts if x.state in (State.DETECTED, State.PROCESSING)]
             if not all(x.raw_path and Path(x.raw_path).exists() and x.transcript is not None
                        for x in group):
                 # o corte e a transcrição vêm do sob demanda; nunca baixar nada aqui
@@ -95,7 +126,8 @@ class Pipeline:
             state, reason = State.REJECTED_AI, f"nota {verdict.score:.1f}: {verdict.reason}"
         else:
             state, reason = State.AWAITING_APPROVAL, verdict.reason
-        for n, x in enumerate(group, 1):
+        for x in group:
+            n = x.part or 1
             v = verdict if n == 1 else verdict.model_copy(
                 update={"title": verdict.series_recap or f"PARTE {n}"})
             x.ai_score = verdict.score
