@@ -439,3 +439,17 @@ async def test_series_uses_fresh_clock_and_skips_discarded_part(db, tmp_path):
     assert db.get(cs[1].id).state is State.DISCARDED
     times = sorted(r["published_at"] for r in db.conn.execute("SELECT published_at FROM publications"))
     assert times[0] != times[1]
+
+
+async def test_series_part_without_recap_gets_continuation_title(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED] * 2)
+    v = V.model_copy(update={"title": "PARTE 2"})
+    c = db.get(cs[1].id)
+    c.ai_json = v.model_dump_json()
+    db.update(c)
+    tk = Pub("tiktok")
+    s = _series_scheduler(db, [tk], cs[0].created_at + timedelta(minutes=5), [])
+    await s.tick()
+    assert tk.jobs[0].caption.split("\n")[0] == "(2/2) continuação"
+    assert tk.jobs[0].title == "(2/2) continuação"
+    assert tk.jobs[1].title == "(1/2) t"

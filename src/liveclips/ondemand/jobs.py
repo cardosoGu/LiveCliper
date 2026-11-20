@@ -343,7 +343,10 @@ class OnDemandRunner:
             failed = [c for c in cands if c.state is State.FAILED]
             rejected = sorted((c for c in cands if c.state is State.REJECTED_AI),
                               key=lambda c: c.ai_score or 0, reverse=True)
-            text = (f"{len(sent)} corte(s) enviado(s) para o #aprovação, "
+            n_sent = len({c.series_id or c.id for c in sent})  # série conta como um corte
+            em_serie = sum(1 for c in sent if c.series_id)
+            detail = f" ({em_serie} em série)" if em_serie else ""
+            text = (f"{n_sent} corte(s){detail} enviado(s) para o #aprovação, "
                     f"{len(rejected)} descartado(s) pela IA")
             if failed:
                 text += f", {len(failed)} falharam"

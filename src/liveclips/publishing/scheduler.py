@@ -15,7 +15,7 @@ from ..core.models import Candidate, State
 from ..core.timeutil import local_day, local_midnight_utc, utcnow
 from ..core.credits import credit_text
 from ..processing.ffmpeg import render_final
-from .caption import build_caption
+from .caption import build_caption, series_title
 from .platforms.base import PublishJob
 from .policy import can_post_now
 
@@ -134,7 +134,9 @@ class Scheduler:
                 url = await self.media.expose(c.vertical_path)
             except Exception as e:
                 errors.append(f"url pública: {e}")
-        job = PublishJob(Path(c.vertical_path), url, caption, verdict.title)
+        job = PublishJob(Path(c.vertical_path), url, caption,
+                         series_title(verdict.title, c.part, c.parts) if c.series_id
+                         else verdict.title)
         for p in publishers:
             if getattr(p, "needs_public_url", False) and not url:
                 continue
@@ -176,7 +178,9 @@ class Scheduler:
             url = (await self.media.expose(c.vertical_path)
                    if getattr(pub, "needs_public_url", False) else "")
             r = await pub.publish(PublishJob(Path(c.vertical_path), url,
-                                             self._caption(c, verdict), verdict.title))
+                                             self._caption(c, verdict),
+                                             series_title(verdict.title, c.part, c.parts)
+                                             if c.series_id else verdict.title))
         except Exception as e:
             others = [e2 for e2 in (c.reason or "").split("; ")
                       if e2 and not e2.startswith(f"{platform}:")]
