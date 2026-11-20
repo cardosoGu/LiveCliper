@@ -77,7 +77,9 @@ class ApprovalDesk:
         posted = 0
         for c in self.db.awaiting_cards(posted=False, limit=100):
             try:
-                if await self._post(c):
+                if c.series_id:
+                    posted += await self._post_series(c)
+                elif await self._post(c):
                     posted += 1
             except Exception as e:  # um card quebrado não trava a fila inteira
                 log.warning("card do clipe %s falhou: %s", c.id, e)
@@ -91,6 +93,46 @@ class ApprovalDesk:
         no_video = video is None and link is None
         c.approval_message_id = await self.transport.post(
             self.card_text(c, verdict, no_video), video, link, c.id, True)
+        self.db.update(c)
+        return True
+
+    async def _post_series(self, c: Candidate) -> int:
+        """Série = um card só: botões na Parte 1, as demais logo abaixo sem botões."""
+        c = self.db.get(c.id) or c  # a lista do tick pode estar velha (a série acabou de ser postada)
+        if c.approval_message_id is not None or c.state is not State.AWAITING_APPROVAL:
+            return 0
+        parts = self.db.series_parts(c.series_id)
+        first = parts[0] if parts else c
+        if c.part != 1:
+            # parte órfã (o post falhou depois do card da Parte 1): só repõe ela mesma
+            if first.approval_message_id is None or first.state is not State.AWAITING_APPROVAL:
+                return 0
+            return int(await self._post_part(c, False))
+        if c.id != first.id or len(parts) < (c.parts or 1):
+            return 0
+        if any(p.state is not State.AWAITING_APPROVAL or p.approval_message_id is not None
+               for p in parts):
+            return 0
+        for p in parts:
+            if not await self.render(p, Verdict.model_validate_json(p.ai_json)):
+                for q in self.db.series_parts(c.series_id):  # a série toda falha junto
+                    if q.state is not State.FAILED:
+                        q.state, q.reason = State.FAILED, "parte da série falhou ao renderizar"
+                        self.db.update(q)
+                return 0
+        n = 0
+        for p in parts:
+            n += int(await self._post_part(p, p.part == 1, render=False))
+        return n
+
+    async def _post_part(self, c: Candidate, buttons: bool, render: bool = True) -> bool:
+        verdict = Verdict.model_validate_json(c.ai_json)
+        if render and not await self.render(c, verdict):
+            return False
+        video, link = await self._attachment(Path(c.vertical_path))
+        no_video = video is None and link is None
+        c.approval_message_id = await self.transport.post(
+            self.card_text(c, verdict, no_video), video, link, c.id, buttons)
         self.db.update(c)
         return True
 
@@ -117,6 +159,8 @@ class ApprovalDesk:
         return [n for n in self.platform_names if f"{n}:" in c.reason]
 
     def card_text(self, c: Candidate, verdict: Verdict, no_video: bool = False) -> str:
+        if c.series_id and c.part != 1:
+            return f"🎞️ Parte {c.part}/{c.parts} — {verdict.title}"
         targets = ", ".join(PLATFORM_LABEL.get(n, n) for n in self.platform_names
                             if self.runtime.platform_enabled(n)) or "nenhuma (todas desligadas)"
         origin = f"🔗 {c.title[:80]} · {fmt_time(c.start_s or 0)}"
@@ -124,6 +168,8 @@ class ApprovalDesk:
                  f"_{verdict.reason}_", origin, "",
                  verdict.caption, " ".join(verdict.hashtags), "",
                  f"Vai para: {targets}"]
+        if c.series_id:
+            lines.append(f"🎞️ Série em {c.parts} partes — os botões valem para todas")
         if no_video:
             lines.append("⚠️ vídeo indisponível no Discord")
         return "\n".join(lines)
@@ -149,23 +195,35 @@ class ApprovalDesk:
                 self._retrying.discard(key)
         if c.state is not State.AWAITING_APPROVAL:
             return f"Esse clipe já foi decidido ({c.state.value})."
+        group = self._group(c)
         if action in ("approve", "now"):
-            c.state = State.APPROVED
-            c.priority = 1 if action == "now" else 0
-            c.reason = None  # daqui em diante, reason guarda falhas de publicação
-            self.db.update(c)
-            await self.on_status(c)
+            for p in group:
+                p.state = State.APPROVED
+                p.priority = 1 if action == "now" else 0
+                p.reason = None  # daqui em diante, reason guarda falhas de publicação
+                self.db.update(p)
+            for p in group:
+                await self.on_status(p)
             return ("⚡ Aprovado: publica agora (respeitando o limite diário)."
                     if action == "now" else "✅ Aprovado: entrou na fila.")
         if action == "discard":
-            c.state = State.DISCARDED
-            c.reason = "descartado no Discord"
-            self._delete_media(c)
-            c.raw_path = c.vertical_path = None
-            self.db.update(c)
-            await self.on_status(c)
+            for p in group:
+                p.state = State.DISCARDED
+                p.reason = "descartado no Discord"
+                self._delete_media(p)
+                p.raw_path = p.vertical_path = None
+                self.db.update(p)
+            for p in group:
+                await self.on_status(p)
             return "❌ Descartado."
         return "Ação desconhecida."
+
+    def _group(self, c: Candidate) -> list[Candidate]:
+        """O clipe sozinho, ou todas as partes da série que ainda aguardam aprovação."""
+        if not c.series_id:
+            return [c]
+        return [p for p in self.db.series_parts(c.series_id)
+                if p.state is State.AWAITING_APPROVAL] or [c]
 
     async def edit(self, candidate_id: int, title: str, caption: str) -> str:
         c = self.db.get(candidate_id)
@@ -174,18 +232,21 @@ class ApprovalDesk:
         title, caption = title.strip(), caption.strip()
         if not title:
             return "O título não pode ficar vazio."
-        verdict = Verdict.model_validate_json(c.ai_json).model_copy(
-            update={"title": title, "caption": caption})
-        c.ai_json = verdict.model_dump_json()
-        if c.vertical_path and Path(c.vertical_path).name == "final.mp4":
-            Path(c.vertical_path).unlink(missing_ok=True)  # o título está queimado no vídeo
-        c.vertical_path = None
-        old_message = c.approval_message_id
-        c.approval_message_id = None  # o próximo tick refaz o vídeo e posta um card novo
-        self.db.update(c)
-        if old_message is not None:
-            await self.transport.edit(old_message, c.id,
-                                      "✏️ Editado — a nova versão chega em seguida.", False)
+        for p in self._group(c):
+            update = {"caption": caption}
+            if p.part in (None, 1):
+                update["title"] = title  # o título-gancho é só da Parte 1
+            verdict = Verdict.model_validate_json(p.ai_json).model_copy(update=update)
+            p.ai_json = verdict.model_dump_json()
+            if p.vertical_path and Path(p.vertical_path).name == "final.mp4":
+                Path(p.vertical_path).unlink(missing_ok=True)  # o título está queimado no vídeo
+            p.vertical_path = None
+            old_message = p.approval_message_id
+            p.approval_message_id = None  # o próximo tick refaz o vídeo e posta um card novo
+            self.db.update(p)
+            if old_message is not None:
+                await self.transport.edit(old_message, p.id,
+                                          "✏️ Editado — a nova versão chega em seguida.", False)
         return "✏️ Salvo. Refazendo o vídeo com o novo título."
 
     def _delete_media(self, c: Candidate) -> None:
@@ -202,7 +263,7 @@ class ApprovalDesk:
         verdict = Verdict.model_validate_json(c.ai_json)
         text = self.card_text(c, verdict) + "\n\n" + self.status_line(c)
         await self.transport.edit(c.approval_message_id, c.id, text,
-                                  c.state is State.AWAITING_APPROVAL,
+                                  c.state is State.AWAITING_APPROVAL and c.part in (None, 1),
                                   tuple(self.failed_platforms(c)))
 
     def status_line(self, c: Candidate) -> str:
@@ -225,7 +286,12 @@ class ApprovalDesk:
             for name in self.failed_platforms(c):
                 err = next((e for e in c.reason.split("; ") if e.startswith(f"{name}:")), "")
                 parts.append(f"{PLATFORM_LABEL.get(name, name)} ❌ {err.removeprefix(f'{name}:').strip()}")
-            return "📤 publicado — " + " · ".join(parts)
+            line = "📤 publicado — " + " · ".join(parts)
+            if c.series_id and c.part == 1 and any(
+                    p["platform"] == "tiktok" and not p["url"]
+                    for p in self.db.publications_for(c.id)):
+                line += f"\n📌 TikTok: publique as partes do app na ordem {c.parts} → 1"
+            return line
         if c.state is State.DISCARDED:
             return "❌ descartado"
         if c.state is State.FAILED:

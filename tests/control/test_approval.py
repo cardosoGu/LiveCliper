@@ -268,3 +268,93 @@ async def test_card_never_shows_age_warning(db, tmp_path):
     desk.now_fn = lambda: c.created_at + timedelta(hours=5)
     await desk.tick()
     assert "⏰" not in t.posts[0][1] and "🔗 Podpah #1049 · " in t.posts[0][1]
+
+
+# --- séries ---------------------------------------------------------------
+RECAP = Verdict(score=7.5, safe=True, reason="r", title="PARTE 2", caption="leg2",
+                hashtags=["#x"], series_recap="Até aqui: ele caiu")
+
+
+def series(db, n=2, states=None):
+    parts = []
+    for i in range(1, n + 1):
+        st = (states or {}).get(i, State.AWAITING_APPROVAL)
+        v = V if i == 1 else RECAP
+        c = make_candidate(state=st, ai_score=7.5, ai_json=v.model_dump_json(),
+                           clip_id=f"s:{i}", series_id="ser1", part=i, parts=n)
+        db.insert_candidate(c)
+        parts.append(c)
+    return parts
+
+
+async def test_series_posts_one_card_and_parts_without_buttons(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    assert await desk.tick() == 2
+    assert await desk.tick() == 0
+    assert [(p[0], p[4]) for p in t.posts] == [(p1.id, True), (p2.id, False)]
+    assert "Série em 2 partes" in t.posts[0][1]
+    assert t.posts[1][1].startswith("🎞️ Parte 2/2")
+    assert db.get(p1.id).approval_message_id == 1001
+    assert db.get(p2.id).approval_message_id == 1002
+
+
+async def test_series_waits_for_all_parts(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    series(db, states={2: State.DETECTED})
+    assert await desk.tick() == 0 and t.posts == []
+
+
+async def test_series_render_failure_fails_whole_series(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path, render_ok=False)
+    p1, p2 = series(db)
+    assert await desk.tick() == 0 and t.posts == []
+    assert db.get(p1.id).state is State.FAILED and db.get(p2.id).state is State.FAILED
+
+
+async def test_series_approve_applies_to_all(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    await desk.tick()
+    await desk.handle("now", p1.id)
+    assert db.get(p1.id).state is State.APPROVED and db.get(p2.id).state is State.APPROVED
+    assert db.get(p2.id).priority == 1
+    assert {e[1] for e in t.edits} == {p1.id, p2.id}
+
+
+async def test_series_discard_applies_to_all(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    await desk.tick()
+    await desk.handle("discard", p2.id)
+    assert db.get(p1.id).state is State.DISCARDED and db.get(p2.id).state is State.DISCARDED
+    assert not (tmp_path / str(p1.id)).exists() and not (tmp_path / str(p2.id)).exists()
+
+
+async def test_series_edit_resets_all_and_reposts(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    await desk.tick()
+    assert "Salvo" in await desk.edit(p1.id, "NOVO", "nova leg")
+    g1, g2 = db.get(p1.id), db.get(p2.id)
+    assert g1.approval_message_id is None and g2.approval_message_id is None
+    assert g1.vertical_path is None and g2.vertical_path is None
+    v1 = Verdict.model_validate_json(g1.ai_json)
+    v2 = Verdict.model_validate_json(g2.ai_json)
+    assert v1.title == "NOVO" and v2.title == "PARTE 2" and v2.series_recap == "Até aqui: ele caiu"
+    assert v1.caption == v2.caption == "nova leg"
+    assert sum("Editado" in e[2] for e in t.edits) == 2
+    assert await desk.tick() == 2 and len(t.posts) == 4
+
+
+async def test_series_status_line_tiktok_hint(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    await desk.tick()
+    for p in (p1, p2):
+        db.record_publication(p.id, "tiktok", "tt", "", p.created_at)
+        g = db.get(p.id)
+        g.state = State.PUBLISHED
+        db.update(g)
+    assert "TikTok: publique as partes do app na ordem 2 → 1" in desk.status_line(db.get(p1.id))
+    assert "publique as partes" not in desk.status_line(db.get(p2.id))
