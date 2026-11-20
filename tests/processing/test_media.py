@@ -146,3 +146,24 @@ def test_cleanup_keeps_protected_dirs(tmp_path: Path):
         os.utime(d, (past, past))
     assert cleanup_media(tmp_path, protected=lambda: {1}) == 1
     assert keep.exists() and not drop.exists()
+
+
+def test_series_ass_part_label_and_next_part_card():
+    from liveclips.processing.ffmpeg import series_ass
+
+    ass = series_ass(1, 3, 40.0)
+    assert "PARTE 1/3" in ass and "VEJA A PARTE 2 NO PERFIL" in ass
+    assert "0:00:38.50" in ass and "0:00:40.00" in ass and r"\fad(" in ass
+    last = series_ass(3, 3, 40.0)
+    assert "PARTE 3/3" in last and "VEJA A PARTE" not in last
+
+
+def test_split_filter_with_extra_ass_layer_adds_second_subtitles():
+    from liveclips.processing.ffmpeg import split_filter
+    from liveclips.processing.layout import split_layout
+
+    lay = split_layout(1920, 1080, None)
+    g = split_filter(lay, "twitch.tv/a", "/w/subs_final.ass", "/w/title.ass",
+                     extra_ass=["/w/series.ass"])
+    assert g.count("subtitles=") == 3
+    assert g.index("title.ass") < g.index("series.ass") and g.endswith("[v]")

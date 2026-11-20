@@ -197,7 +197,9 @@ class Scheduler:
         try:
             c.vertical_path = str(await self.render_fn(
                 raw, raw.with_name("final.mp4"), credit_text(c.platform, c.channel),
-                raw.with_name("subs.ass"), verdict.title, verdict.facecam))
+                raw.with_name("subs.ass"), verdict.title, verdict.facecam,
+                series=(c.part, c.parts) if c.series_id else None,
+                layout=verdict.layout, subject=verdict.subject))
         except Exception as e:
             log.warning("render final falhou em %s: %s", c.clip_id, e)
             c.state, c.reason = State.FAILED, f"render final: {e}"[:500]

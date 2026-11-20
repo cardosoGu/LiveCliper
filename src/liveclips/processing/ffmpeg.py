@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from ..ai.verdict import FaceCam
-from .layout import CAM_H, GAME_H, Layout, split_layout
+from .layout import CAM_H, GAME_H, Layout, podcast_layout, split_layout
 from .subtitles import anchor_ass
 
 log = logging.getLogger(__name__)
@@ -140,6 +140,37 @@ def title_ass(title: str, center_y: int) -> str | None:
         f"Dialogue: 1,0:00:00.00,{end},Title,,0,0,0,,{anim}{text}", ""])
 
 
+NEXT_CARD_SECONDS = 1.5
+
+
+def _ass_time(t: float) -> str:
+    cs = round(max(t, 0.0) * 100)
+    return f"{cs // 360000}:{cs // 6000 % 60:02}:{cs // 100 % 60:02}.{cs % 100:02}"
+
+
+def series_ass(part: int, parts: int, duration: float) -> str:
+    """ASS da série: "PARTE N/M" no topo o clipe todo e, se houver próxima parte,
+    "VEJA A PARTE N+1 NO PERFIL" no centro nos últimos 1,5 s. Sem emoji (a fonte não desenha)."""
+    end = _ass_time(duration)
+    events = [f"Dialogue: 2,0:00:00.00,{end},Series,,0,0,0,,"
+              f"{{\\an5\\pos(540,110)}}PARTE {part}/{parts}"]
+    if part < parts:
+        start = _ass_time(max(0.0, duration - NEXT_CARD_SECONDS))
+        events.append(f"Dialogue: 2,{start},{end},Series,,0,0,0,,"
+                      f"{{\\an5\\pos(540,960)\\fad(250,0)}}VEJA A PARTE {part + 1} NO PERFIL")
+    return "\n".join([
+        "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
+        "WrapStyle: 2", "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: Series,{TITLE_FONT},56,&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,"
+        "-1,0,0,0,100,100,0,0,1,6,4,5,40,40,0,1",
+        "", "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        *events, ""])
+
+
 def _blur_chain(label_in: str, label_out: str, height: int) -> str:
     """Faixa de cima desfocada e escurecida, que entra suave com o título e some com ele.
     Só os primeiros segundos passam pelo boxblur (trim); depois o overlay deixa passar."""
@@ -150,8 +181,10 @@ def _blur_chain(label_in: str, label_out: str, height: int) -> str:
             f"fade=t=out:st={HOLD_END}:d={TITLE_END - HOLD_END:.1f}:alpha=1[{label_out}]")
 
 
-def split_filter(lay: Layout, credit: str, subs: str | None, title: str | None) -> str:
-    """Grafo do vertical final. `subs` e `title` são caminhos de arquivos .ass (ou None)."""
+def split_filter(lay: Layout, credit: str, subs: str | None, title: str | None,
+                 extra_ass: list[str] | None = None) -> str:
+    """Grafo do vertical final. `subs`, `title` e `extra_ass` são caminhos de arquivos .ass
+    (camadas extras, como a da série, vêm depois do título)."""
     parts: list[str] = []
     if lay.cam is not None:
         parts += ["[0:v]split=2[c0][g0]",
@@ -174,7 +207,9 @@ def split_filter(lay: Layout, credit: str, subs: str | None, title: str | None) 
                  "fontsize=34:x=(w-text_w)/2:y=h-110:box=1:boxcolor=black@0.45:"
                  "boxborderw=10[cred]")
     last = "cred"
-    for name, path in (("subs", subs), ("ttl", title)):
+    layers = [("subs", subs), ("ttl", title)]
+    layers += [(f"x{i}", p) for i, p in enumerate(extra_ass or [])]
+    for name, path in layers:
         if path:
             parts.append(f"[{last}]subtitles=filename='{path}'[{name}]")
             last = name
@@ -183,11 +218,14 @@ def split_filter(lay: Layout, credit: str, subs: str | None, title: str | None) 
 
 
 async def render_split(src: Path, dst: Path, credit: str, subs_path: Path | None,
-                       title: str, facecam: FaceCam | None) -> Path:
+                       title: str, facecam: FaceCam | None, *,
+                       series: tuple[int, int] | None = None, layout: str = "game",
+                       subject: FaceCam | None = None) -> Path:
     """Vertical final: webcam em cima e jogo embaixo (ou jogo em tela cheia sem webcam),
     legenda na emenda, crédito no rodapé e título-gancho animado com desfoque."""
     src_w, src_h = await probe_dimensions(src)
-    lay = split_layout(src_w, src_h, facecam)
+    lay = (podcast_layout(src_w, src_h, subject) if layout == "podcast"
+           else split_layout(src_w, src_h, facecam))
     subs = None
     if subs_path and Path(subs_path).exists():
         subs = dst.with_name("subs_final.ass")
@@ -198,8 +236,14 @@ async def render_split(src: Path, dst: Path, credit: str, subs_path: Path | None
     if ass:
         ttl = dst.with_name("title.ass")
         ttl.write_text(ass, encoding="utf-8")
+    extra: list[str] = []
+    if series:
+        ser = dst.with_name("series.ass")
+        ser.write_text(series_ass(series[0], series[1], await probe_duration(src)),
+                       encoding="utf-8")
+        extra.append(ser.as_posix())
     graph = split_filter(lay, credit, subs.as_posix() if subs else None,
-                         ttl.as_posix() if ttl else None)
+                         ttl.as_posix() if ttl else None, extra_ass=extra)
     await run(
         "ffmpeg", "-y", "-i", str(src), "-filter_complex", graph,
         "-map", "[v]", "-map", "0:a?",
@@ -210,11 +254,14 @@ async def render_split(src: Path, dst: Path, credit: str, subs_path: Path | None
 
 
 async def render_final(src: Path, dst: Path, credit: str, subs_path: Path | None,
-                       title: str, facecam: FaceCam | None) -> Path:
+                       title: str, facecam: FaceCam | None, *,
+                       series: tuple[int, int] | None = None, layout: str = "game",
+                       subject: FaceCam | None = None) -> Path:
     """Render dos clipes aprovados. Se a tela dividida falhar, cai no layout antigo
     (jogo no centro com fundo desfocado) para não perder o clipe."""
     try:
-        return await render_split(src, dst, credit, subs_path, title, facecam)
+        return await render_split(src, dst, credit, subs_path, title, facecam,
+                                  series=series, layout=layout, subject=subject)
     except MediaError as e:
         log.warning("render dividido falhou, usando o layout simples: %s", e)
         return await render_vertical(src, dst, credit, subs_path)

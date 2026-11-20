@@ -54,3 +54,29 @@ def test_layout_with_facecam_puts_caption_on_the_seam():
     lay = split_layout(1920, 1080, FaceCam(x=0.78, y=0.0, w=0.22, h=0.28))
     assert lay.cam is not None and lay.caption_y == CAM_H and lay.blur_h == CAM_H
     assert lay.title_y == CAM_H // 2
+
+
+def test_podcast_layout_centers_on_subject_inside_frame():
+    from liveclips.processing.layout import FULL_CAPTION_Y, podcast_layout
+
+    lay = podcast_layout(1920, 1080, FaceCam(x=0.6, y=0.2, w=0.2, h=0.4))  # centro x=0.7
+    assert lay.cam is None and lay.game.h == 1080 and lay.game.w == 606
+    assert abs(lay.game.x + lay.game.w / 2 - 0.7 * 1920) <= 2
+    assert inside(lay.game, 1920, 1080)
+    assert lay.caption_y == FULL_CAPTION_Y and lay.title_y == 320 and lay.blur_h == 640
+
+
+def test_podcast_layout_without_subject_is_centered():
+    from liveclips.processing.layout import podcast_layout
+
+    lay = podcast_layout(1920, 1080, None)
+    assert abs(lay.game.x + lay.game.w / 2 - 960) <= 2
+
+
+def test_podcast_layout_subject_on_the_edge_is_clamped():
+    from liveclips.processing.layout import podcast_layout
+
+    left = podcast_layout(1920, 1080, FaceCam(x=0.0, y=0.2, w=0.1, h=0.3))
+    right = podcast_layout(1920, 1080, FaceCam(x=0.9, y=0.2, w=0.1, h=0.3))
+    assert left.game.x == 0
+    assert right.game.x + right.game.w == 1920

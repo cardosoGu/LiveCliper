@@ -98,3 +98,10 @@ def split_layout(src_w: int, src_h: int, fc: FaceCam | None) -> Layout:
                       FULL_CAPTION_Y, CANVAS_H // 6, CANVAS_H // 3)
     return Layout(cam_crop(fc, src_w, src_h), game_crop(src_w, src_h, fc, GAME_H),
                   SEAM_Y, CAM_H // 2, CAM_H)
+
+
+def podcast_layout(src_w: int, src_h: int, subject: FaceCam | None) -> Layout:
+    """Podcast: maior recorte 9:16 do quadro, centrado no rosto de quem fala (ou no centro)."""
+    cx = (subject.x + subject.w / 2) * src_w if subject else src_w / 2
+    game = _fit((0, 0, src_w, src_h), CANVAS_W / CANVAS_H, cx, src_h / 2)
+    return Layout(None, game, FULL_CAPTION_Y, CANVAS_H // 6, CANVAS_H // 3)

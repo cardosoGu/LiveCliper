@@ -146,9 +146,11 @@ async def test_approved_clip_gets_split_render_before_publishing(db, tmp_path):
     from liveclips.ai.verdict import FaceCam
 
     calls = []
+    kws = []
 
-    async def render(src, dst, credit, subs, title, facecam):
+    async def render(src, dst, credit, subs, title, facecam, **kw):
         calls.append((src, dst, credit, subs, title, facecam))
+        kws.append(kw)
         dst.write_bytes(b"final")
         return dst
 
@@ -173,7 +175,7 @@ async def test_approved_clip_gets_split_render_before_publishing(db, tmp_path):
 
 
 async def test_render_failure_marks_failed_and_alerts(db, tmp_path):
-    async def broken(*a):
+    async def broken(*a, **kw):
         raise RuntimeError("ffmpeg caiu")
 
     raw = tmp_path / "raw.mp4"
@@ -291,3 +293,29 @@ async def test_retry_with_missing_video_keeps_published_state_and_reason(db, tmp
     assert "indisponível" in msg
     got = db.get(c.id)
     assert got.state is State.PUBLISHED and got.reason == "tiktok: token vencido"
+
+
+async def test_series_part_with_podcast_verdict_passes_series_and_layout(db, tmp_path):
+    from liveclips.ai.verdict import FaceCam
+
+    got = {}
+
+    async def render(src, dst, credit, subs, title, facecam, **kw):
+        got.update(kw)
+        dst.write_bytes(b"final")
+        return dst
+
+    subj = FaceCam(x=0.6, y=0.2, w=0.2, h=0.4)
+    v = Verdict(score=8, safe=True, reason="r", title="t", caption="c",
+                hashtags=["#x"], layout="podcast", subject=subj)
+    raw = tmp_path / "raw.mp4"
+    raw.write_bytes(b"r")
+    c = make_candidate(state=State.APPROVED, ai_score=8.0, ai_json=v.model_dump_json(),
+                       raw_path=str(raw), series_id="s1", part=2, parts=3)
+    db.insert_candidate(c)
+    now = c.created_at + timedelta(minutes=5)
+    cfg = load_settings({})
+    s = Scheduler(db, cfg, [Pub("tiktok")], Media(), Notifier(), RuntimeSettings(db, cfg),
+                  now_fn=lambda: now, render_fn=render)
+    assert await s.tick()
+    assert got["series"] == (2, 3) and got["layout"] == "podcast" and got["subject"] == subj
