@@ -232,6 +232,7 @@ class ApprovalDesk:
         title, caption = title.strip(), caption.strip()
         if not title:
             return "O título não pode ficar vazio."
+        olds: list[tuple[int, int]] = []
         for p in self._group(c):
             update = {"caption": caption}
             if p.part in (None, 1):
@@ -245,8 +246,13 @@ class ApprovalDesk:
             p.approval_message_id = None  # o próximo tick refaz o vídeo e posta um card novo
             self.db.update(p)
             if old_message is not None:
-                await self.transport.edit(old_message, p.id,
+                olds.append((old_message, p.id))
+        for message_id, pid in olds:  # só depois de gravar tudo: falha do Discord não trava a série
+            try:
+                await self.transport.edit(message_id, pid,
                                           "✏️ Editado — a nova versão chega em seguida.", False)
+            except Exception as e:
+                log.warning("marcar o card do clipe %s como editado falhou: %s", pid, e)
         return "✏️ Salvo. Refazendo o vídeo com o novo título."
 
     def _delete_media(self, c: Candidate) -> None:

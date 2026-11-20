@@ -358,3 +358,45 @@ async def test_series_status_line_tiktok_hint(db, tmp_path):
         db.update(g)
     assert "TikTok: publique as partes do app na ordem 2 → 1" in desk.status_line(db.get(p1.id))
     assert "publique as partes" not in desk.status_line(db.get(p2.id))
+
+
+async def test_series_edit_survives_discord_failure(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    await desk.tick()
+
+    async def boom(*a, **k):
+        raise RuntimeError("404 mensagem apagada")
+
+    t.edit = boom
+    await desk.edit(p1.id, "NOVO", "leg")
+    assert db.get(p1.id).approval_message_id is None and db.get(p2.id).approval_message_id is None
+    assert await desk.tick() == 2 and len(t.posts) == 4
+
+
+async def test_series_orphan_part_is_reposted_alone_without_buttons(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    fail = {"on": True}
+
+    async def post(text, video, link, candidate_id, buttons):
+        if candidate_id == p2.id and fail["on"]:
+            raise RuntimeError("discord fora do ar")
+        return await FakeTransport.post(t, text, video, link, candidate_id, buttons)
+
+    t.post = post
+    await desk.tick()
+    assert db.get(p1.id).approval_message_id is not None
+    assert db.get(p2.id).approval_message_id is None
+    fail["on"] = False
+    assert await desk.tick() == 1
+    assert t.posts[-1][0] == p2.id and t.posts[-1][4] is False
+    assert [p[0] for p in t.posts].count(p1.id) == 1
+
+
+async def test_series_approve_from_part_2_approves_all(db, tmp_path):
+    desk, t, _ = make_desk(db, tmp_path)
+    p1, p2 = series(db)
+    await desk.tick()
+    await desk.handle("approve", p2.id)
+    assert db.get(p1.id).state is State.APPROVED and db.get(p2.id).state is State.APPROVED
