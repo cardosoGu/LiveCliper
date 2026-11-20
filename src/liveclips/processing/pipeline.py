@@ -18,7 +18,6 @@ from ..core.config import Settings
 from ..core.db import DB
 from ..core.models import Candidate, State
 from ..core.timeutil import local_day, utcnow
-from ..ondemand.jobs import CUTTING_REASON
 
 log = logging.getLogger(__name__)
 
@@ -93,11 +92,11 @@ class Pipeline:
         try:
             if c.series_id:
                 parts = [c if x.id == c.id else x for x in self.db.series_parts(c.series_id)]
-                if any(x.state is State.FAILED and x.reason == CUTTING_REASON for x in parts):
-                    # outras partes ainda sendo recortadas pelo sob demanda: espera
-                    self._set(c, State.DETECTED, "aguardando as outras partes da série")
-                    return
                 group = [x for x in parts if x.state in (State.DETECTED, State.PROCESSING)]
+            if c.series_id and len(parts) < (c.parts or 0):
+                for x in group:
+                    self._set(x, State.FAILED, "série incompleta")
+                return
             if not all(x.raw_path and Path(x.raw_path).exists() and x.transcript is not None
                        for x in group):
                 # o corte e a transcrição vêm do sob demanda; nunca baixar nada aqui

@@ -183,24 +183,12 @@ async def test_series_ai_unavailable_returns_to_detected(db, tmp_path):
     assert all(x.state is State.DETECTED for x in db.series_parts("ser"))
 
 
-async def test_series_waits_while_other_part_is_being_cut(db, tmp_path):
-    from liveclips.ondemand.jobs import CUTTING_REASON
-    p = make_series(db, tmp_path, series_verdict(8.0), n=2, skip_raw=2)
-    p2 = db.series_parts("ser")[1]
-    p2.state, p2.reason = State.FAILED, CUTTING_REASON
-    db.update(p2)
+async def test_series_without_all_part_rows_fails_as_incomplete(db, tmp_path):
+    p = make_series(db, tmp_path, verdict(8.0), n=2, only_parts={1})
     await p.tick()
+    [one] = db.series_parts("ser")
+    assert one.state is State.FAILED and one.reason == "série incompleta"
     assert p.evaluator.calls == 0 and p.evals_today() == 0
-    one, two = db.series_parts("ser")
-    assert one.state is State.DETECTED and one.reason == "aguardando as outras partes da série"
-    assert two.state is State.FAILED and two.reason == CUTTING_REASON
-    raw = tmp_path / "raw2.mp4"
-    raw.write_bytes(b"raw")
-    two.raw_path, two.transcript, two.state = str(raw), "fala2", State.DETECTED
-    db.update(two)
-    await p.tick()
-    assert p.evaluator.calls == 1
-    assert all(x.state is State.AWAITING_APPROVAL for x in db.series_parts("ser"))
 
 
 async def test_orphan_part_inherits_decision(db, tmp_path):

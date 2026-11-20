@@ -318,3 +318,45 @@ async def test_long_topic_becomes_a_series_of_parts(db, tmp_path):
     assert all(c.state is State.DETECTED for c in cands)
     assert cands[0].end_s <= cands[1].start_s
     assert any("recortando 2/2" in t for _, t in notes.progress)
+
+
+async def test_series_parts_are_released_together_only_when_all_cut(db, tmp_path):
+    r, notes, calls = make(db, tmp_path,
+                           topic=Topic(peak=60.0, start=10.0, end=115.0, why="longo"))
+    states_at_cut = []
+    orig = r.ops.download_section
+
+    async def spy(*a, **k):
+        states_at_cut.append(sorted(c.state.value for c in db.job_candidates(1)))
+        return await orig(*a, **k)
+
+    r.ops.download_section = spy
+    jid = r.enqueue("https://youtu.be/x", "", 1, 2)
+    await r.process(db.get_job(jid))
+    # durante os dois downloads nenhuma parte estava liberada
+    assert len(states_at_cut) == 2
+    assert all(s == ["failed", "failed"] for s in states_at_cut)
+    assert all(c.state is State.DETECTED for c in db.job_candidates(jid))
+
+
+async def test_series_with_failed_part_is_not_released(db, tmp_path):
+    from liveclips.ondemand.jobs import CUTTING_REASON
+    r, notes, calls = make(db, tmp_path,
+                           topic=Topic(peak=60.0, start=10.0, end=115.0, why="longo"))
+    orig = r.ops.download_section
+    n = {"i": 0}
+
+    async def flaky(*a, **k):
+        n["i"] += 1
+        if n["i"] == 2:
+            raise RuntimeError("erro de download")
+        return await orig(*a, **k)
+
+    r.ops.download_section = flaky
+    jid = r.enqueue("https://youtu.be/x", "", 1, 2)
+    await r.process(db.get_job(jid))
+    cands = db.job_candidates(jid)
+    assert len(cands) == 2
+    assert all(c.state is State.FAILED and c.reason == CUTTING_REASON for c in cands)
+    job = db.get_job(jid)
+    assert job["state"] == "failed" and "não consegui recortar" in notes.finished[-1][2]

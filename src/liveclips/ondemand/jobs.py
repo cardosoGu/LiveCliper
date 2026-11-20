@@ -258,7 +258,10 @@ class OnDemandRunner:
             else:
                 sid = f"{job['id']}:{int((source.start + whole[0]) * 10)}"
                 clips.extend((a, b, sid, n, len(parts)) for n, (a, b) in enumerate(parts, 1))
+        # 1) cria TODAS as linhas antes de cortar (o pipeline nunca vê meia série)
+        todo = []  # (i, cand, s, e, sid) ainda por cortar
         made = 0
+        blocked = set()  # séries com linha que não deu para criar
         for i, (s, e, sid, part, parts) in enumerate(clips, 1):
             clip_id = f"ondemand:{job['id']}:{int((source.start + s) * 10)}"
             cand = existing.get(clip_id)
@@ -266,17 +269,38 @@ class OnDemandRunner:
                                          and cand.reason == CUTTING_REASON):
                 made += 1  # já cortado (pronto ou além)
                 continue
+            if cand is None:
+                cand = self._new_candidate(job, meta, source, clip_id, s, e)
+                cand.series_id, cand.part, cand.parts = sid, part, parts
+                if self.db.insert_candidate(cand) is None:
+                    if sid:
+                        blocked.add(sid)
+                    continue  # já existia
+            todo.append((i, cand, s, e, sid))
+        # 2) corta; clipe avulso é liberado na hora, série só quando todas as partes cortaram
+        series_ok: dict[str, list[Candidate]] = {}
+        for i, cand, s, e, sid in todo:
+            if sid and sid in blocked:
+                continue
             await self._progress(job, "cuts", f"✂️ recortando {i}/{len(clips)}…")
             try:
-                if cand is None:
-                    cand = self._new_candidate(job, meta, source, clip_id, s, e)
-                    cand.series_id, cand.part, cand.parts = sid, part, parts
-                    if self.db.insert_candidate(cand) is None:
-                        continue  # já existia
-                await self._finish_cut(job, source, transcript, cand, s, e)
-                made += 1
+                await self._finish_cut(job, source, transcript, cand, s, e,
+                                       release=sid is None)
+                if sid is None:
+                    made += 1
+                else:
+                    series_ok.setdefault(sid, []).append(cand)
             except Exception as ex:
                 log.warning("corte %s do job %s falhou: %s", i, job["id"], ex)
+                if sid:
+                    blocked.add(sid)
+        for sid, cands in series_ok.items():
+            if sid in blocked:
+                continue  # série incompleta: fica FAILED/recortando e um novo run tenta de novo
+            for cand in cands:
+                cand.state, cand.reason = State.DETECTED, None
+                self.db.update(cand)
+            made += len(cands)
         if made == 0 and clips:
             raise JobFailed("não consegui recortar nenhum trecho (erro no download)")
         return made
@@ -292,8 +316,8 @@ class OnDemandRunner:
                          reason=CUTTING_REASON, job_id=job["id"], start_s=source.start + s,
                          end_s=source.start + e)
 
-    async def _finish_cut(self, job, source, transcript, c, s, e) -> None:
-        """Baixa o trecho, gera legenda/transcrição e só então libera para o pipeline."""
+    async def _finish_cut(self, job, source, transcript, c, s, e, release: bool = True) -> None:
+        """Baixa o trecho, gera legenda/transcrição e (se `release`) libera para o pipeline."""
         folder = self.media_dir / str(c.id)
         raw = await self.ops.download_section(
             source.url, source.start + s, source.start + e, folder / "raw.mp4", live=source.live,
@@ -306,7 +330,8 @@ class OnDemandRunner:
             (folder / "subs.ass").write_text(cues_to_ass(cues, w, h), encoding="utf-8")
         c.raw_path = str(raw)
         c.transcript = " ".join(x["word"].strip() for x in words)
-        c.state, c.reason = State.DETECTED, None
+        if release:
+            c.state, c.reason = State.DETECTED, None
         self.db.update(c)
 
     async def check_evaluating(self) -> None:
