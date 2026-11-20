@@ -319,3 +319,62 @@ async def test_series_part_with_podcast_verdict_passes_series_and_layout(db, tmp
                   now_fn=lambda: now, render_fn=render)
     assert await s.tick()
     assert got["series"] == (2, 3) and got["layout"] == "podcast" and got["subject"] == subj
+
+
+def _series(db, tmp_path, states):
+    parts = len(states)
+    out = []
+    for i, st in enumerate(states, start=1):
+        c = make_candidate(clip_id=f"s-{i}", channel="gaules", state=st, ai_score=8.0,
+                           ai_json=V.model_dump_json(), series_id="ser", part=i, parts=parts,
+                           vertical_path=str(tmp_path / "vertical.mp4"))
+        db.insert_candidate(c)
+        out.append(c)
+    (tmp_path / "vertical.mp4").write_bytes(b"v")
+    return out
+
+
+def _series_scheduler(db, pubs, now, sleeps):
+    cfg = load_settings({})
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    return Scheduler(db, cfg, pubs, Media(), Notifier(), RuntimeSettings(db, cfg),
+                     now_fn=lambda: now, sleep=fake_sleep)
+
+
+async def test_series_published_last_to_first_as_one_post(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED] * 3)
+    tk = Pub("tiktok")
+    sleeps = []
+    s = _series_scheduler(db, [tk], cs[0].created_at + timedelta(minutes=5), sleeps)
+    assert await s.tick()
+    assert [j.caption.split("\n")[0] for j in tk.jobs] == ["(3/3) t", "(2/3) t", "(1/3) t"]
+    assert sleeps == [120, 120]
+    assert all(db.get(c.id).state is State.PUBLISHED for c in cs)
+    assert db.publications_count_since(cs[0].created_at) == 1
+
+
+async def test_series_waits_for_all_parts_approved(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED, State.AWAITING_APPROVAL, State.APPROVED])
+    tk = Pub("tiktok")
+    s = _series_scheduler(db, [tk], cs[0].created_at + timedelta(minutes=5), [])
+    assert not await s.tick()
+    assert tk.jobs == []
+
+
+async def test_series_part_failure_does_not_stop_others(db, tmp_path):
+    cs = _series(db, tmp_path, [State.APPROVED] * 2)
+
+    class Flaky(Pub):
+        async def publish(self, job):
+            if job.caption.startswith("(2/2)"):
+                raise PublishError("caiu")
+            return await super().publish(job)
+
+    tk = Flaky("tiktok")
+    s = _series_scheduler(db, [tk], cs[0].created_at + timedelta(minutes=5), [])
+    await s.tick()
+    assert db.get(cs[0].id).state is State.PUBLISHED
+    assert db.get(cs[1].id).state is State.APPROVED

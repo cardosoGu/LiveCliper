@@ -144,3 +144,13 @@ def test_build_publishers_tiktok_draft(db):
     cfg = load_settings({"TIKTOK_MODE": "draft", "TIKTOK_CLIENT_KEY": "k"})
     [tt] = build_publishers(cfg, db, None)
     assert tt.name == "tiktok" and tt.draft is True
+
+
+def test_build_caption_series_part():
+    from liveclips.ai.verdict import Verdict
+    from liveclips.publishing.caption import build_caption
+    v = Verdict(score=8, safe=True, reason="r", title="Titulo", caption="c", hashtags=["#a"])
+    text = build_caption(v, "twitch", "gaules", part=2, parts=3)
+    assert text.startswith("(2/3) Titulo")
+    assert "Veja todas as partes no perfil." in text
+    assert "Veja todas" not in build_caption(v, "twitch", "gaules")

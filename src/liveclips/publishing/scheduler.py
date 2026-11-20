@@ -32,13 +32,16 @@ class Notifier(Protocol):
 RETRY_BASE_MIN = 5
 RETRY_MAX_MIN = 60
 MAX_ATTEMPTS_PER_CLIP = 3
+SERIES_GAP_S = 120  # pausa entre as partes de uma série, da última para a primeira
 
 
 class Scheduler:
     def __init__(self, db: DB, cfg: Settings, publishers: list, media, notifier: Notifier,
                  runtime: RuntimeSettings, now_fn: Callable[[], datetime] = utcnow,
                  render_fn: Callable[..., Awaitable[Path]] = render_final,
-                 on_status: Callable[[Candidate], Awaitable[None]] | None = None):
+                 on_status: Callable[[Candidate], Awaitable[None]] | None = None,
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep):
+        self.sleep = sleep
         self.db = db
         self.cfg = cfg
         self.publishers = publishers
@@ -61,7 +64,7 @@ class Scheduler:
         now = self.now_fn()
         if self.retry_at is not None and now < self.retry_at:
             return False
-        approved = self.db.by_state(State.APPROVED, 200)
+        approved = [c for c in self.db.by_state(State.APPROVED, 200) if self._series_ready(c)]
         if not approved:
             return False
         limit = self.runtime.post_max_per_day()
@@ -77,12 +80,31 @@ class Scheduler:
                                 self.runtime.post_interval_min()):
                 return False
             c = min(approved, key=lambda x: x.id)  # ordem de aprovação
-        await self.publish(c, now)
+        if c.series_id:
+            await self.publish_series(c, now)
+        else:
+            await self.publish(c, now)
         return True
+
+    def _series_ready(self, c: Candidate) -> bool:
+        """Série só sai quando nenhuma parte ainda espera aprovação/processamento."""
+        if not c.series_id:
+            return True
+        done = (State.APPROVED, State.PUBLISHED, State.FAILED)
+        return all(p.state in done for p in self.db.series_parts(c.series_id))
+
+    async def publish_series(self, c: Candidate, now: datetime) -> None:
+        """Um post só: partes aprovadas da última para a primeira, com pausa entre elas.
+        Falha total numa parte não impede as outras."""
+        parts = [p for p in self.db.series_parts(c.series_id) if p.state is State.APPROVED]
+        for i, p in enumerate(sorted(parts, key=lambda x: x.part or 0, reverse=True)):
+            if i:
+                await self.sleep(SERIES_GAP_S)
+            await self.publish(p, now)
 
     async def publish(self, c: Candidate, now: datetime) -> None:
         verdict = Verdict.model_validate_json(c.ai_json)
-        caption = build_caption(verdict, c.platform, c.channel)
+        caption = self._caption(c, verdict)
         if not await self.ensure_rendered(c, verdict):
             await self._notify_status(c)
             return
@@ -112,6 +134,12 @@ class Scheduler:
             await self._on_total_failure(c, now, errors)
         await self._notify_status(c)
 
+    @staticmethod
+    def _caption(c: Candidate, verdict: Verdict) -> str:
+        if c.series_id:
+            return build_caption(verdict, c.platform, c.channel, part=c.part, parts=c.parts)
+        return build_caption(verdict, c.platform, c.channel)
+
     async def publish_to(self, c: Candidate, platform: str) -> str:
         """🔁 do card: reenvia a uma plataforma só (ignora intervalo, limite e liga/desliga)."""
         pub = next((p for p in self.publishers if p.name == platform), None)
@@ -129,8 +157,7 @@ class Scheduler:
             url = (await self.media.expose(c.vertical_path)
                    if getattr(pub, "needs_public_url", False) else "")
             r = await pub.publish(PublishJob(Path(c.vertical_path), url,
-                                             build_caption(verdict, c.platform, c.channel),
-                                             verdict.title))
+                                             self._caption(c, verdict), verdict.title))
         except Exception as e:
             others = [e2 for e2 in (c.reason or "").split("; ")
                       if e2 and not e2.startswith(f"{platform}:")]

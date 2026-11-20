@@ -203,3 +203,16 @@ def test_old_database_gets_series_columns(tmp_path):
     assert (got.series_id, got.part, got.parts) == ("x", 2, 3)
     idx = {r[1] for r in db.conn.execute("PRAGMA index_list(candidates)")}
     assert "idx_cand_series" in idx
+
+
+def test_series_counts_as_one_publication(db):
+    t = None
+    for part in (1, 2):
+        c = make_candidate(clip_id=f"s-{part}", series_id="abc", part=part, parts=2)
+        db.insert_candidate(c)
+        t = c.created_at
+        db.record_publication(c.id, "instagram", f"p{part}", "u", t)
+    solo = make_candidate(clip_id="solo")
+    db.insert_candidate(solo)
+    db.record_publication(solo.id, "instagram", "p9", "u", t)
+    assert db.publications_count_since(t) == 2

@@ -250,8 +250,9 @@ class DB:
 
     def publications_count_since(self, since: datetime) -> int:
         row = self.conn.execute(
-            "SELECT COUNT(DISTINCT candidate_id) AS n FROM publications WHERE published_at>=?"
-            " AND platform<>'dry_run'",
+            "SELECT COUNT(DISTINCT COALESCE(c.series_id, CAST(p.candidate_id AS TEXT))) AS n"
+            " FROM publications p JOIN candidates c ON c.id = p.candidate_id"
+            " WHERE p.published_at>=? AND p.platform<>'dry_run'",
             (since.isoformat(),),
         ).fetchone()
         return int(row["n"])
