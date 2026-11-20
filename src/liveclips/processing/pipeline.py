@@ -52,7 +52,8 @@ class Pipeline:
         return float(self.db.kv_get("min_score", str(self.cfg.ai_min_score)))
 
     async def tick(self) -> int:
-        live = self.db.by_state(State.DETECTED, 500)
+        # partes 2+ de uma série esperam: quem decide é a Parte 1, com a série inteira
+        live = [c for c in self.db.by_state(State.DETECTED, 500) if c.part in (None, 1)]
         budget = self.cfg.ai_daily_budget - self.evals_today()
         batch = live[:max(0, min(self.concurrency, budget))]
         for c in batch:
@@ -62,13 +63,21 @@ class Pipeline:
         return len(batch)
 
     async def process(self, c: Candidate) -> None:
+        group = [c]
         try:
-            if not (c.raw_path and Path(c.raw_path).exists() and c.transcript is not None):
+            if c.series_id:
+                group = [c if x.id == c.id else x for x in self.db.series_parts(c.series_id)]
+            if not all(x.raw_path and Path(x.raw_path).exists() and x.transcript is not None
+                       for x in group):
                 # o corte e a transcrição vêm do sob demanda; nunca baixar nada aqui
-                self._set(c, State.FAILED, "trecho sumiu antes da avaliação")
+                for x in group:
+                    self._set(x, State.FAILED, "trecho sumiu antes da avaliação")
                 return
             meta = {"platform": c.platform, "channel": c.channel, "viewers": c.viewers,
-                    "source": c.source, "transcript": c.transcript, "language": None}
+                    "source": c.source, "language": None,
+                    "transcript": " … ".join(x.transcript for x in group)}
+            if c.series_id:
+                meta["parts"] = c.parts
             verdict = await self.evaluator.evaluate(Path(c.raw_path), Path(c.raw_path), meta)
         except AIUnavailable:
             self.ai_down = True
@@ -76,17 +85,23 @@ class Pipeline:
             return
         except Exception as e:
             log.warning("candidato %s falhou: %s", c.id, e)
-            self._set(c, State.FAILED, str(e)[:500])
+            for x in group:
+                self._set(x, State.FAILED, str(e)[:500])
             return
         self.db.kv_incr_float(self._evals_key(), 1)
-        c.ai_score = verdict.score
-        c.ai_json = verdict.model_dump_json()
         if not verdict.safe:
-            self._set(c, State.REJECTED_AI, f"inseguro: {verdict.reason}")
+            state, reason = State.REJECTED_AI, f"inseguro: {verdict.reason}"
         elif verdict.score < self.min_score():
-            self._set(c, State.REJECTED_AI, f"nota {verdict.score:.1f}: {verdict.reason}")
+            state, reason = State.REJECTED_AI, f"nota {verdict.score:.1f}: {verdict.reason}"
         else:
-            self._set(c, State.AWAITING_APPROVAL, verdict.reason)
+            state, reason = State.AWAITING_APPROVAL, verdict.reason
+        for n, x in enumerate(group, 1):
+            v = verdict if n == 1 else verdict.model_copy(
+                update={"title": verdict.series_recap or f"PARTE {n}"})
+            x.ai_score = verdict.score
+            x.ai_json = v.model_dump_json()
+            self._set(x, state, reason)
+        if state is State.AWAITING_APPROVAL:
             log.info("aguardando aprovação: %s (%s, nota %.1f)",
                      c.clip_id, c.channel, verdict.score)
 
