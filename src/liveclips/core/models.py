@@ -55,3 +55,6 @@ class Candidate:
     job_id: int | None = None  # pedido sob demanda que gerou o corte
     start_s: float | None = None  # posição do corte no vídeo original
     end_s: float | None = None
+    series_id: str | None = None  # partes de um mesmo assunto compartilham o id
+    part: int | None = None  # 1, 2, 3…
+    parts: int | None = None  # total de partes da série

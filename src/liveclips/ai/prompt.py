@@ -43,15 +43,24 @@ facecam: retângulo da WEBCAM do streamer (o rosto/câmera sobreposto ao jogo), 
 ORIGINAL do vídeo (x e y = canto superior esquerdo, w = largura, h = altura; ex.: webcam no canto inferior
 esquerdo ocupando 1/4 da largura: {"x": 0, "y": 0.7, "w": 0.25, "h": 0.3}). Inclua a moldura inteira da câmera.
 Use null se não houver webcam visível durante a maior parte do clipe, ou se a câmera for o vídeo
-inteiro (Just Chatting/IRL sem jogo na tela)."""
+inteiro (Just Chatting/IRL sem jogo na tela).
+series_recap: quando o prompt disser que é uma série, 1 frase curta (até ~40 caracteres, sem emoji) que situa
+quem cai direto na Parte 2 ou 3 (ex.: "A HISTÓRIA DO ASSALTO CONTINUA"); senão null.
+layout: "podcast" quando não há jogo na tela (conversa, podcast, Just Chatting, IRL); senão "game".
+subject: retângulo do rosto de quem mais fala (mesmo formato do facecam), ou null."""
 
 
 def build_prompt(meta: dict) -> str:
     transcript = (meta.get("transcript") or "").strip() or "(sem fala detectada)"
     language = meta.get("language") or "não detectado"
+    series = ""
+    if meta.get("parts"):
+        series = (f"Série: este assunto foi dividido em {meta['parts']} partes; a transcrição "
+                  "abaixo é da série inteira. Avalie a série toda.\n")
     return (
         f"Plataforma: {meta.get('platform')} | Canal: {meta.get('channel')} | "
         f"Espectadores: {meta.get('viewers')} | Origem: {meta.get('source')}\n"
         f"Idioma detectado na fala: {language}\n"
+        f"{series}"
         f"Transcrição da fala (idioma original):\n{transcript[:4000]}"
     )

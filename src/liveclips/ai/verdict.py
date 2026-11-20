@@ -24,6 +24,9 @@ class Verdict(BaseModel):
     caption: str
     hashtags: list[str]
     facecam: FaceCam | None = None
+    series_recap: str | None = None
+    subject: FaceCam | None = None  # rosto de quem mais fala (layout podcast)
+    layout: str = "game"  # "game" | "podcast"
 
 
 _FACECAM_SCHEMA = {
@@ -43,8 +46,12 @@ VERDICT_SCHEMA = {
         "caption": {"type": "string"},
         "hashtags": {"type": "array", "items": {"type": "string"}},
         "facecam": {"anyOf": [_FACECAM_SCHEMA, {"type": "null"}]},
+        "series_recap": {"type": ["string", "null"]},
+        "subject": {"anyOf": [_FACECAM_SCHEMA, {"type": "null"}]},
+        "layout": {"type": "string", "enum": ["game", "podcast"]},
     },
-    "required": ["score", "safe", "reason", "title", "caption", "hashtags", "facecam"],
+    "required": ["score", "safe", "reason", "title", "caption", "hashtags", "facecam",
+                 "series_recap", "subject", "layout"],
     "additionalProperties": False,
 }
 
@@ -70,6 +77,22 @@ def valid_facecam(fc: FaceCam | None) -> FaceCam | None:
     return FaceCam(x=x, y=y, w=w, h=h)
 
 
+def valid_subject(fc: FaceCam | None) -> FaceCam | None:
+    """Como valid_facecam, mas sem área máxima: um rosto em close pode ser grande."""
+    if fc is None:
+        return None
+    t = _EDGE_TOLERANCE
+    if (fc.w <= 0 or fc.h <= 0 or fc.x < -t or fc.y < -t
+            or fc.x + fc.w > 1 + t or fc.y + fc.h > 1 + t):
+        return None
+    x, y = max(fc.x, 0.0), max(fc.y, 0.0)
+    w = min(fc.w - (x - fc.x), 1.0 - x)
+    h = min(fc.h - (y - fc.y), 1.0 - y)
+    if w * h < FACECAM_MIN_AREA:
+        return None
+    return FaceCam(x=x, y=y, w=w, h=h)
+
+
 def parse_verdict(text: str) -> Verdict:
     try:
         v = Verdict.model_validate_json(text)
@@ -79,6 +102,11 @@ def parse_verdict(text: str) -> Verdict:
     tags = [h.strip() for h in v.hashtags if h.strip()]
     v.hashtags = [h if h.startswith("#") else f"#{h}" for h in tags][:8]
     v.facecam = valid_facecam(v.facecam)
+    v.subject = valid_subject(v.subject)
+    if v.layout not in ("game", "podcast"):
+        v.layout = "game"
+    if v.series_recap is not None:
+        v.series_recap = v.series_recap.strip() or None
     return v
 
 

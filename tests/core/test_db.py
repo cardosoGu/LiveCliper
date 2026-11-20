@@ -163,3 +163,43 @@ def test_retire_legacy_candidates_discards_only_non_ondemand_open_ones(db):
     for k in "abc":
         assert got[k].state is State.DISCARDED and got[k].reason == "tempo real removido"
     assert got["d"].state is State.DETECTED
+
+
+def test_series_fields_roundtrip_and_series_parts(db):
+    for part in (3, 1, 2):
+        db.insert_candidate(make_candidate(clip_id=f"s-{part}", series_id="abc", part=part,
+                                           parts=3))
+    db.insert_candidate(make_candidate(clip_id="outro", series_id="zzz", part=1, parts=2))
+    db.insert_candidate(make_candidate(clip_id="solto"))
+    got = db.series_parts("abc")
+    assert [c.part for c in got] == [1, 2, 3]
+    assert all(c.series_id == "abc" and c.parts == 3 for c in got)
+    solto = db.get(db.conn.execute("SELECT id FROM candidates WHERE clip_id='solto'")
+                   .fetchone()["id"])
+    assert solto.series_id is None and solto.part is None and solto.parts is None
+
+
+def test_old_database_gets_series_columns(tmp_path):
+    import sqlite3
+
+    from liveclips.core.db import DB
+
+    path = tmp_path / "old2.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE candidates (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " platform TEXT NOT NULL, source TEXT NOT NULL, clip_id TEXT NOT NULL UNIQUE,"
+        " clip_url TEXT NOT NULL, channel TEXT NOT NULL, created_at TEXT NOT NULL,"
+        " duration REAL NOT NULL, title TEXT NOT NULL, viewers INTEGER NOT NULL,"
+        " view_count INTEGER NOT NULL, spike_score REAL NOT NULL, rank REAL NOT NULL,"
+        " state TEXT NOT NULL, raw_path TEXT, vertical_path TEXT, transcript TEXT,"
+        " ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL)")
+    conn.commit()
+    conn.close()
+    db = DB(str(path))
+    c = make_candidate(series_id="x", part=2, parts=3)
+    db.insert_candidate(c)
+    got = db.get(c.id)
+    assert (got.series_id, got.part, got.parts) == ("x", 2, 3)
+    idx = {r[1] for r in db.conn.execute("PRAGMA index_list(candidates)")}
+    assert "idx_cand_series" in idx

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS candidates (
   state TEXT NOT NULL, raw_path TEXT, vertical_path TEXT, transcript TEXT,
   ai_score REAL, ai_json TEXT, reason TEXT, updated_at TEXT NOT NULL,
   extra_clip_url TEXT, approval_message_id INTEGER, priority INTEGER NOT NULL DEFAULT 0,
-  job_id INTEGER, start_s REAL, end_s REAL
+  job_id INTEGER, start_s REAL, end_s REAL,
+  series_id TEXT, part INTEGER, parts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_cand_state ON candidates(state);
 CREATE INDEX IF NOT EXISTS idx_cand_channel ON candidates(channel, created_at);
@@ -43,7 +44,7 @@ _COLS = [
     "duration", "title", "viewers", "view_count", "spike_score", "rank",
     "state", "raw_path", "vertical_path", "transcript", "ai_score", "ai_json",
     "reason", "updated_at", "extra_clip_url", "approval_message_id", "priority",
-    "job_id", "start_s", "end_s",
+    "job_id", "start_s", "end_s", "series_id", "part", "parts",
 ]
 
 
@@ -84,6 +85,9 @@ class DB:
         "job_id": "INTEGER",
         "start_s": "REAL",
         "end_s": "REAL",
+        "series_id": "TEXT",
+        "part": "INTEGER",
+        "parts": "INTEGER",
     }
 
     def _migrate(self) -> None:
@@ -92,6 +96,8 @@ class DB:
             if name not in cols:
                 self.conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {decl}")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_cand_job ON candidates(job_id)")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cand_series ON candidates(series_id)")
         self.conn.commit()
 
     # --- candidatos -------------------------------------------------------
@@ -218,6 +224,12 @@ class DB:
     def job_candidates(self, job_id: int) -> list[Candidate]:
         rows = self.conn.execute(
             "SELECT * FROM candidates WHERE job_id=? ORDER BY id", (job_id,)).fetchall()
+        return [_from_row(r) for r in rows]
+
+    def series_parts(self, series_id: str) -> list[Candidate]:
+        rows = self.conn.execute(
+            "SELECT * FROM candidates WHERE series_id=? ORDER BY part, id", (series_id,)
+        ).fetchall()
         return [_from_row(r) for r in rows]
 
     # --- publicações ------------------------------------------------------
